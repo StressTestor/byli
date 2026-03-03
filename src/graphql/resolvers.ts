@@ -14,11 +14,11 @@ function decodeCursor(cursor: string): string {
 
 function sortMap(sort: string): string {
   switch (sort) {
-    case 'FOR_YOU': return 'foryou';
-    case 'LATEST': return 'latest';
-    case 'POPULAR': return 'popular';
-    case 'TOP_RATED': return 'top_rated';
-    default: return 'foryou';
+    case 'FOR_YOU': return 'FOR_YOU';
+    case 'LATEST': return 'LATEST';
+    case 'POPULAR': return 'POPULAR';
+    case 'TOP_RATED': return 'POPULAR';
+    default: return 'FOR_YOU';
   }
 }
 
@@ -491,19 +491,23 @@ function formatFeedConnection(items: any[], limit: number) {
   const hasNextPage = items.length > limit;
   const edges = items.slice(0, limit).map(item => ({
     node: {
-      id: item.article_id,
+      id: item.id || item.article_id,
       title: item.title,
       excerpt: item.excerpt,
       xUrl: item.x_url,
+      coverImageUrl: item.cover_image_url,
       author: {
-        handle: item.author_handle,
-        displayName: item.author_name,
+        id: item.author_id,
+        handle: item.author_handle || item.author_display_name,
+        displayName: item.author_display_name || item.author_name,
         verified: item.author_verified,
       },
       categories: item.category_slugs || [],
       stats: {
         likeCount: item.like_count,
         bookmarkCount: item.bookmark_count,
+        commentCount: item.comment_count || 0,
+        shareCount: item.share_count || 0,
         avgRating: item.avg_rating,
       },
       featured: item.featured,
