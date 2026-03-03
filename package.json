@@ -1,0 +1,40 @@
+{
+  "name": "byline",
+  "version": "0.1.0",
+  "description": "The discovery layer for X Articles",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "supabase db push",
+    "db:reset": "supabase db reset",
+    "db:seed": "tsx src/scripts/seed.ts",
+    "db:migrate": "supabase migration up",
+    "ingest": "tsx src/scripts/ingest-manual.ts",
+    "codegen": "graphql-codegen"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.10.0",
+    "@as-integrations/next": "^3.0.0",
+    "@supabase/ssr": "^0.5.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "graphql": "^16.9.0",
+    "graphql-tag": "^2.12.6",
+    "next": "14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "supabase": "^1.200.0",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

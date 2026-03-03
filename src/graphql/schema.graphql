@@ -1,0 +1,236 @@
+"""
+Byline GraphQL API Schema v1.0
+The discovery layer for X Articles.
+"""
+
+scalar DateTime
+scalar UUID
+
+# ─── Core Types ──────────────────────────────────────────────
+
+type Article {
+  id: UUID!
+  xArticleId: String
+  xUrl: String!
+  title: String!
+  excerpt: String
+  bodyPreview: String
+  author: Author!
+  categories: [Category!]!
+  stats: ArticleStats!
+  coverImageUrl: String
+  readTimeMin: Int
+  featured: Boolean!
+  publishedAt: DateTime
+  indexedAt: DateTime!
+
+  """Whether the current authenticated user has liked this article"""
+  viewerHasLiked: Boolean!
+  """Whether the current authenticated user has bookmarked this article"""
+  viewerHasBookmarked: Boolean!
+  """The current authenticated user's rating (null if not rated)"""
+  viewerRating: Int
+}
+
+type Author {
+  id: UUID!
+  handle: String!
+  displayName: String!
+  avatarUrl: String
+  bio: String
+  verified: Boolean!
+  claimed: Boolean!
+  followerCount: Int!
+  articleCount: Int!
+  articles(first: Int = 10, after: String): ArticleConnection!
+}
+
+type Category {
+  id: UUID!
+  slug: String!
+  label: String!
+  icon: String
+  articleCount: Int!
+}
+
+type ArticleStats {
+  likeCount: Int!
+  bookmarkCount: Int!
+  commentCount: Int!
+  shareCount: Int!
+  ratingCount: Int!
+  avgRating: Float!
+}
+
+# ─── Pagination (Relay-style) ────────────────────────────────
+
+type ArticleConnection {
+  edges: [ArticleEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ArticleEdge {
+  node: Article!
+  cursor: String!
+  """Feed relevance score (only populated for 'foryou' sort)"""
+  score: Float
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+# ─── User Types ──────────────────────────────────────────────
+
+type User {
+  id: UUID!
+  username: String
+  avatarUrl: String
+  xHandle: String
+  bookmarks(first: Int = 20, after: String): ArticleConnection!
+  likes(first: Int = 20, after: String): ArticleConnection!
+  ratings: [UserRating!]!
+  apiKeys: [ApiKey!]!
+}
+
+type UserRating {
+  article: Article!
+  score: Int!
+  createdAt: DateTime!
+}
+
+type ApiKey {
+  id: UUID!
+  label: String
+  tier: String!
+  rateLimit: Int!
+  lastUsed: DateTime
+  createdAt: DateTime!
+  """The actual key is only returned once on creation"""
+  key: String
+}
+
+type Submission {
+  id: UUID!
+  url: String!
+  category: Category
+  notes: String
+  status: SubmissionStatus!
+  article: Article
+  createdAt: DateTime!
+  reviewedAt: DateTime
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+# ─── Queries ─────────────────────────────────────────────────
+
+type Query {
+  """Browse the article feed with filtering and sorting"""
+  articles(
+    first: Int = 20
+    after: String
+    category: String
+    sort: FeedSort = FOR_YOU
+    search: String
+  ): ArticleConnection!
+
+  """Get a single article by ID or X Article ID"""
+  article(id: UUID, xArticleId: String): Article
+
+  """Get an author profile by handle"""
+  author(handle: String!): Author
+
+  """Get trending articles for a timeframe"""
+  trending(
+    timeframe: Timeframe = WEEK
+    first: Int = 20
+    after: String
+  ): ArticleConnection!
+
+  """List all categories with article counts"""
+  categories: [Category!]!
+
+  """Get the current authenticated user's profile"""
+  me: User
+
+  """Get the current user's submissions"""
+  mySubmissions(status: SubmissionStatus): [Submission!]!
+
+  """Search articles by text query"""
+  search(
+    query: String!
+    first: Int = 20
+    after: String
+  ): ArticleConnection!
+}
+
+enum FeedSort {
+  FOR_YOU
+  LATEST
+  POPULAR
+  TOP_RATED
+}
+
+enum Timeframe {
+  DAY
+  WEEK
+  MONTH
+  ALL_TIME
+}
+
+# ─── Mutations ───────────────────────────────────────────────
+
+type Mutation {
+  """Like an article (requires auth)"""
+  likeArticle(articleId: UUID!): Article!
+
+  """Unlike an article (requires auth)"""
+  unlikeArticle(articleId: UUID!): Article!
+
+  """Bookmark an article (requires auth)"""
+  bookmarkArticle(articleId: UUID!): Article!
+
+  """Remove a bookmark (requires auth)"""
+  removeBookmark(articleId: UUID!): Article!
+
+  """Rate an article 1-5 (requires auth, upserts)"""
+  rateArticle(articleId: UUID!, score: Int!): Article!
+
+  """Remove a rating (requires auth)"""
+  removeRating(articleId: UUID!): Article!
+
+  """Submit an X Article URL for indexing (requires auth)"""
+  submitArticle(input: SubmitArticleInput!): Submission!
+
+  """Claim an author profile via X OAuth token (requires auth)"""
+  claimAuthor(xAccessToken: String!): Author!
+
+  """Update the current user's profile (requires auth)"""
+  updateProfile(input: UpdateProfileInput!): User!
+
+  """Generate a new API key (requires auth)"""
+  createApiKey(label: String): ApiKey!
+
+  """Revoke an API key (requires auth)"""
+  revokeApiKey(id: UUID!): Boolean!
+}
+
+input SubmitArticleInput {
+  url: String!
+  categoryId: UUID
+  notes: String
+}
+
+input UpdateProfileInput {
+  username: String
+  avatarUrl: String
+}
