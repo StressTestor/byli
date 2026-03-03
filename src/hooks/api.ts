@@ -17,17 +17,28 @@ async function gql<T = any>(
   query: string,
   variables?: Record<string, any>
 ): Promise<T> {
-  const supabase = createBrowserClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Only attach auth header if Supabase env vars are configured
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const supabase = createBrowserClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+    } catch {
+      // Auth unavailable, proceed without token
+    }
+  }
 
   const res = await fetch(GQL_ENDPOINT, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(session?.access_token && {
-        Authorization: `Bearer ${session.access_token}`,
-      }),
-    },
+    headers,
     body: JSON.stringify({ query, variables }),
   });
 
