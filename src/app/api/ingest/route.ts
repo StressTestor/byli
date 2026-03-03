@@ -243,7 +243,7 @@ interface IngestResult {
   duration_ms: number;
 }
 
-export async function ingestArticles(): Promise<IngestResult> {
+async function ingestArticles(): Promise<IngestResult> {
   const start = Date.now();
   let searched = 0;
   let articlesFound = 0;
