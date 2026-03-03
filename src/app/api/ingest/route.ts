@@ -256,7 +256,7 @@ async function ingestArticles(): Promise<IngestResult> {
   // Load category slugs -> IDs map
   const { data: categories } = await supabaseAdmin
     .from('categories')
-    .select('id, slug');
+    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
   const catMap = new Map((categories || []).map(c => [c.slug, c.id]));
 
   let cursor: string | undefined;
