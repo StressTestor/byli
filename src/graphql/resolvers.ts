@@ -1,4 +1,5 @@
-import { supabaseAdmin, createSupabaseServer } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase-admin';
+import { createSupabaseServer } from '@/lib/supabase-server';
 import type { FeedSort, Timeframe, ArticleWithRelations } from '@/types/database';
 
 // ─── Helpers ─────────────────────────────────────────────────

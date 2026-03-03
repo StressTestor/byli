@@ -3,7 +3,7 @@
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createBrowserClient } from '@/lib/supabase';
+import { createBrowserClient } from '@/lib/supabase-browser';
 import {
   AuthLayout, Field, XOAuthButton, OrDivider, SubmitButton, AuthMessage,
   PasswordStrength, MailIcon, LockIcon, UserIcon, ArrowIcon,

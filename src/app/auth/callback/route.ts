@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
 
   // Auto-claim: if this X handle matches an author record, claim it
   if (xUserId) {
-    const adminClient = (await import('@/lib/supabase')).supabaseAdmin;
+    const adminClient = (await import('@/lib/supabase-admin')).supabaseAdmin;
 
     const { data: author } = await adminClient
       .from('authors')
