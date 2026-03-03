@@ -8,7 +8,7 @@
  * Run as: Vercel Cron (every 15 min) or standalone Node script.
  * 
  * Cron config in vercel.json:
- * { "crons": [{ "path": "/api/ingest", "schedule": "*/15 * * * *" }] }
+ * { "crons": [{ "path": "/api/ingest", "schedule": "0 0 * * *" }] }
  * 
  * Cost estimate (TwitterAPI.io pay-as-you-go):
  *   Search:  $0.15 / 1K tweets  = ~$0.003 per page (20 results)
@@ -18,7 +18,7 @@
  *   Reality: Most cycles find 0-5 new → ~$2-5/day
  */
 
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
 
 // ─── Config ──────────────────────────────────────────────────────────

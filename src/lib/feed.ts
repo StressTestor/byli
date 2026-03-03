@@ -12,7 +12,7 @@
  *   /feed.json, /feed/tech.json, etc.
  */
 
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 
 // ─── Types ───────────────────────────────────────────────────
 
