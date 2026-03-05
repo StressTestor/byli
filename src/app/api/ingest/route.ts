@@ -121,14 +121,14 @@ interface ArticleData {
 
 async function fetchUserTimeline(userName: string): Promise<TimelineTweet[]> {
   const params = new URLSearchParams({ userName });
-  const res = await fetch(`${TWITTERAPI_BASE}/user/tweets?${params}`, {
+  const res = await fetch(`${TWITTERAPI_BASE}/user/last_tweets?${params}`, {
     headers: { 'X-API-Key': TWITTERAPI_KEY },
   });
 
   if (!res.ok) return [];
 
   const json: UserTimelineResponse = await res.json();
-  // API returns tweets in different shapes
+  // API returns tweets in .data.tweets
   const tweets = json.data?.tweets || json.tweets || [];
   if (json.data?.unavailable) return [];
   return Array.isArray(tweets) ? tweets : [];
