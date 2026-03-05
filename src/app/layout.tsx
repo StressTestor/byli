@@ -1,9 +1,9 @@
 /**
- * Byline Root Layout
- * 
+ * Linkdrift Root Layout
+ *
  * Wraps the entire app in providers:
  *   - MoneytagProvider (ad system, toggleable via env)
- * 
+ *
  * Loads inter font, sets dark theme defaults.
  */
 
@@ -15,17 +15,17 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Byline — The discovery layer for X Articles',
+  title: 'Linkdrift — Where X Articles surface',
   description: 'Browse, search, and discover long-form Articles published on X. The content layer X forgot to build.',
   openGraph: {
-    title: 'Byline',
-    description: 'The discovery layer for X Articles',
+    title: 'Linkdrift',
+    description: 'Where X Articles surface',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Byline',
-    description: 'The discovery layer for X Articles',
+    title: 'Linkdrift',
+    description: 'Where X Articles surface',
   },
 };
 

@@ -1,5 +1,5 @@
 /**
- * Byline Feed Page
+ * Linkdrift Feed Page
  */
 
 'use client';
@@ -15,8 +15,8 @@ function Header() {
     <header className="border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold tracking-tight text-white">byline</h1>
-          <span className="text-xs text-zinc-600 hidden sm:inline">the discovery layer for X Articles</span>
+          <h1 className="text-xl font-bold tracking-tight text-white">linkdrift</h1>
+          <span className="text-xs text-zinc-600 hidden sm:inline">where X Articles surface</span>
         </div>
         <div className="flex items-center gap-3">
           <button className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50">
