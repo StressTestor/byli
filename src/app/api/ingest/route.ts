@@ -22,13 +22,15 @@ const ARTICLE_FETCH_DELAY = 250; // ms between article probes
 // Curated accounts known to post X Articles.
 // Add more handles here to expand coverage.
 const SEED_ACCOUNTS = [
-  'elonmusk', 'pmarca', 'paulg', 'naval', 'balaborafael',
-  'VitalikButerin', 'sama', 'garaborafael', 'chaaborafael',
-  'Snowden', 'jack', 'mattxwebb', 'benthompson',
+  'elonmusk', 'pmarca', 'paulg', 'naval',
+  'VitalikButerin', 'sama', 'balajis',
+  'Snowden', 'jack', 'benthompson',
   'cdixon', 'patrickc', 'levelsio', 'DHH',
-  'jason', 'saborafael', 'BillGates', 'sataborafael',
-  'Grimezsz', 'MarioNawfal', 'cb_doge', 'WallStreetSilv',
-  'unusual_whales', 'Farzad_Mesbahi',
+  'jason', 'BillGates', 'TimCook',
+  'MarioNawfal', 'cb_doge', 'WallStreetSilv',
+  'unusual_whales', 'garrytan', 'Suhail',
+  'Decentralisedco', 'mattxwebb', 'nntaleb',
+  'tylercowen', 'matthewball', 'wolfejosh',
 ];
 
 // ─── Category Classifier (v1: keyword matching) ─────────────────────
