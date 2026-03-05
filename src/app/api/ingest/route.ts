@@ -18,9 +18,17 @@ import { NextResponse, NextRequest } from 'next/server';
 const TWITTERAPI_KEY = process.env.TWITTERAPI_IO_KEY!;
 const TWITTERAPI_BASE = 'https://api.twitterapi.io/twitter';
 
-// Curated accounts known to post X Articles.
-// Add more handles here to expand coverage.
+// Accounts confirmed to post X Articles (article field != null).
+// High-yield accounts are paginated deeper (up to MAX_PAGES).
 const SEED_ACCOUNTS = [
+  // Confirmed article writers (tested 2026-03-05)
+  'Decentralisedco',  // 8/20 tweets are articles — primary source
+  'NotBatmanDev',
+  'DefiIgnas',
+  'CryptoCred',
+  'Rewkang',
+  'tokenterminal',
+  // High-profile accounts — low article rate but worth checking
   'elonmusk', 'pmarca', 'paulg', 'naval',
   'VitalikButerin', 'sama', 'balajis',
   'Snowden', 'jack', 'benthompson',
@@ -28,9 +36,13 @@ const SEED_ACCOUNTS = [
   'jason', 'BillGates', 'TimCook',
   'MarioNawfal', 'cb_doge', 'WallStreetSilv',
   'unusual_whales', 'garrytan', 'Suhail',
-  'Decentralisedco', 'mattxwebb', 'nntaleb',
+  'mattxwebb', 'nntaleb',
   'tylercowen', 'matthewball', 'wolfejosh',
 ];
+
+// Paginate deeper for high-yield accounts
+const HIGH_YIELD_ACCOUNTS = new Set(['Decentralisedco']);
+const MAX_PAGES = 3; // ~60 tweets per high-yield account
 
 // ─── Category Classifier (v1: keyword matching) ─────────────────────
 
@@ -102,6 +114,8 @@ interface UserTimelineResponse {
     unavailable?: boolean;
   };
   tweets?: TimelineTweet[];
+  has_next_page?: boolean;
+  next_cursor?: string;
 }
 
 interface ArticleData {
@@ -127,19 +141,44 @@ interface ArticleData {
 
 // ─── API Helpers ─────────────────────────────────────────────────────
 
-async function fetchUserTimeline(userName: string): Promise<TimelineTweet[]> {
+interface TimelinePage {
+  tweets: TimelineTweet[];
+  nextCursor?: string;
+}
+
+async function fetchTimelinePage(userName: string, cursor?: string): Promise<TimelinePage> {
   const params = new URLSearchParams({ userName });
+  if (cursor) params.set('cursor', cursor);
+
   const res = await fetch(`${TWITTERAPI_BASE}/user/last_tweets?${params}`, {
     headers: { 'X-API-Key': TWITTERAPI_KEY },
   });
 
-  if (!res.ok) return [];
+  if (!res.ok) return { tweets: [] };
 
   const json: UserTimelineResponse = await res.json();
-  // API returns tweets in .data.tweets
+  if (json.data?.unavailable) return { tweets: [] };
+
   const tweets = json.data?.tweets || json.tweets || [];
-  if (json.data?.unavailable) return [];
-  return Array.isArray(tweets) ? tweets : [];
+  return {
+    tweets: Array.isArray(tweets) ? tweets : [],
+    nextCursor: json.has_next_page ? json.next_cursor : undefined,
+  };
+}
+
+async function fetchUserTimeline(userName: string, maxPages = 1): Promise<TimelineTweet[]> {
+  const allTweets: TimelineTweet[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < maxPages; page++) {
+    const result = await fetchTimelinePage(userName, cursor);
+    allTweets.push(...result.tweets);
+    if (!result.nextCursor) break;
+    cursor = result.nextCursor;
+    if (page < maxPages - 1) await sleep(300);
+  }
+
+  return allTweets;
 }
 
 async function probeArticle(tweetId: string): Promise<ArticleData | null> {
@@ -208,7 +247,8 @@ async function ingestArticles(): Promise<IngestResult> {
 
   for (const handle of SEED_ACCOUNTS) {
     try {
-      const tweets = await fetchUserTimeline(handle);
+      const pages = HIGH_YIELD_ACCOUNTS.has(handle) ? MAX_PAGES : 1;
+      const tweets = await fetchUserTimeline(handle, pages);
       accountsChecked++;
 
       if (tweets.length === 0) {
