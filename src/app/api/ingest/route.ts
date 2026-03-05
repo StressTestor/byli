@@ -1,10 +1,10 @@
 /**
  * Linkdrift Ingestion Worker
  *
- * Discovery strategy: fetch timelines from curated accounts, then probe
- * each tweet against the /twitter/article endpoint. X Articles are regular
- * tweets with article content attached - there's no search filter for them,
- * so we try each tweet and keep the ones that return article data.
+ * Discovery strategy: fetch timelines from curated accounts.
+ * The timeline response includes an `article` field on each tweet —
+ * non-null means it's an X Article with title, preview, cover image inline.
+ * No extra API calls needed for discovery.
  *
  * Cron config in vercel.json:
  * { "crons": [{ "path": "/api/ingest", "schedule": "0 0 * * *" }] }
@@ -17,7 +17,6 @@ import { NextResponse, NextRequest } from 'next/server';
 
 const TWITTERAPI_KEY = process.env.TWITTERAPI_IO_KEY!;
 const TWITTERAPI_BASE = 'https://api.twitterapi.io/twitter';
-const ARTICLE_FETCH_DELAY = 250; // ms between article probes
 
 // Curated accounts known to post X Articles.
 // Add more handles here to expand coverage.
@@ -72,12 +71,13 @@ interface TimelineTweet {
   type: string;
   createdAt: string;
   url: string;
-  tweetBy: {
+  author: {
     id: string;
     userName: string;
     name: string;
     profilePicture: string;
     isBlueVerified: boolean;
+    isVerified?: boolean;
     followers: number;
   };
   likeCount: number;
@@ -85,6 +85,14 @@ interface TimelineTweet {
   replyCount: number;
   bookmarkCount: number;
   quoteCount: number;
+  viewCount: number | string;
+  // Non-null when tweet is an X Article
+  article: {
+    title: string;
+    preview_text: string;
+    cover_media_img_url?: string;
+    contents: Array<{ text: string }>;
+  } | null;
 }
 
 interface UserTimelineResponse {
@@ -191,7 +199,6 @@ async function ingestArticles(): Promise<IngestResult> {
   let skippedDuplicates = 0;
   let skippedUnavailable = 0;
   let errors = 0;
-  let articleProbes = 0;
 
   // Load category slugs -> IDs map
   const { data: categories } = await supabaseAdmin
@@ -212,10 +219,13 @@ async function ingestArticles(): Promise<IngestResult> {
       for (const tweet of tweets) {
         tweetsScanned++;
 
-        // Skip retweets - they won't be articles by this user
-        if (tweet.type === 'Retweet' || tweet.text?.startsWith('RT @')) continue;
+        // Skip non-articles immediately — the timeline includes the article
+        // field inline. No extra API call needed.
+        if (!tweet.article) continue;
 
-        // Dedup check first (cheap, no API call)
+        articlesFound++;
+
+        // Dedup check
         const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
         const { data: existing } = await supabaseAdmin
           .from('articles')
@@ -228,15 +238,7 @@ async function ingestArticles(): Promise<IngestResult> {
           continue;
         }
 
-        // Probe the article endpoint
-        await sleep(ARTICLE_FETCH_DELAY);
-        articleProbes++;
-        const article = await probeArticle(tweet.id);
-        if (!article) continue;
-
-        // Found an article
-        articlesFound++;
-
+        const article = tweet.article;
         const fullText = article.contents
           ? article.contents.map(c => c.text).join('\n\n')
           : tweet.text;
@@ -246,8 +248,7 @@ async function ingestArticles(): Promise<IngestResult> {
         const coverImage = article.cover_media_img_url || null;
         const readTime = estimateReadTime(cleanText);
 
-        // Resolve author from article data
-        const authorSource = article.author || tweet.tweetBy;
+        const authorSource = tweet.author;
 
         // Upsert author
         const { data: author } = await supabaseAdmin
@@ -285,7 +286,7 @@ async function ingestArticles(): Promise<IngestResult> {
             read_time_min: readTime,
             status: 'published',
             source: 'twitterapi',
-            published_at: article.createdAt || tweet.createdAt,
+            published_at: tweet.createdAt,
           })
           .select('id')
           .single();
@@ -307,13 +308,13 @@ async function ingestArticles(): Promise<IngestResult> {
             .insert(categoryLinks);
         }
 
-        // Seed engagement stats from article metrics
+        // Seed engagement stats from tweet metrics
         await supabaseAdmin
           .from('article_stats')
           .update({
-            like_count: article.likeCount ?? tweet.likeCount ?? 0,
+            like_count: tweet.likeCount ?? 0,
             bookmark_count: tweet.bookmarkCount ?? 0,
-            comment_count: article.replyCount ?? tweet.replyCount ?? 0,
+            comment_count: tweet.replyCount ?? 0,
             share_count: tweet.retweetCount ?? 0,
           })
           .eq('article_id', newArticle.id);
@@ -328,9 +329,8 @@ async function ingestArticles(): Promise<IngestResult> {
     }
   }
 
-  // Cost estimate: timeline = ~$0.003/page, article probe = 100 credits each
-  const timelinePages = accountsChecked;
-  const costEstimate = (timelinePages * 0.003) + (articleProbes * 0.015);
+  // Cost: only timeline fetches, no article probes needed
+  const costEstimate = accountsChecked * 0.003;
 
   return {
     accounts_checked: accountsChecked,
