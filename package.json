@@ -1,7 +1,7 @@
 {
-  "name": "byline",
+  "name": "linkdrift",
   "version": "0.1.0",
-  "description": "The discovery layer for X Articles",
+  "description": "Where X Articles surface",
   "private": true,
   "scripts": {
     "dev": "next dev",
