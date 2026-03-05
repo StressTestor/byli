@@ -95,12 +95,13 @@ interface TwitterApiSearchResponse {
 }
 
 interface TwitterApiArticleResponse {
-  data: {
-    id: string;
+  status: string;
+  article: {
     title: string;
-    content: string;        // full article HTML/text
-    coverImage?: string;
-    tweetBy: {
+    preview_text: string;
+    cover_media_img_url?: string;
+    contents: Array<{ text: string }>;
+    author: {
       id: string;
       userName: string;
       name: string;
@@ -110,9 +111,9 @@ interface TwitterApiArticleResponse {
     };
     createdAt: string;
     likeCount: number;
-    retweetCount: number;
     replyCount: number;
-    bookmarkCount: number;
+    quoteCount: number;
+    viewCount: number;
   };
 }
 
@@ -154,8 +155,8 @@ async function discoverArticleTweets(cursor?: string): Promise<TwitterApiSearchR
 // Endpoint: GET /twitter/article?id={tweetId}
 // Cost: 100 credits (~$0.015) per article.
 
-async function fetchArticleContent(tweetId: string): Promise<TwitterApiArticleResponse['data'] | null> {
-  const params = new URLSearchParams({ id: tweetId });
+async function fetchArticleContent(tweetId: string): Promise<TwitterApiArticleResponse['article'] | null> {
+  const params = new URLSearchParams({ tweet_id: tweetId });
 
   const res = await fetch(`${TWITTERAPI_BASE}/article?${params}`, {
     headers: { 'X-API-Key': TWITTERAPI_KEY },
@@ -168,9 +169,9 @@ async function fetchArticleContent(tweetId: string): Promise<TwitterApiArticleRe
     throw new Error(`TwitterAPI.io article error: ${res.status} ${body}`);
   }
 
-  const json = await res.json();
-  // API may return { data: {...} } or flat object
-  return json.data || json;
+  const json: TwitterApiArticleResponse = await res.json();
+  if (json.status !== 'success' || !json.article) return null;
+  return json.article;
 }
 
 // ─── URL Pattern Detection ───────────────────────────────────────────
@@ -300,14 +301,17 @@ async function ingestArticles(): Promise<IngestResult> {
 
           // Build article data from enriched content or tweet fallback
           const title = enriched?.title || tweet.text.slice(0, 120) || 'Untitled';
-          const fullText = enriched?.content ? stripHtml(enriched.content) : tweet.text;
-          const excerpt = fullText.slice(0, 300);
-          const bodyPreview = fullText.slice(0, 500);
-          const coverImage = enriched?.coverImage || null;
-          const readTime = estimateReadTime(fullText);
+          const fullText = enriched?.contents
+            ? enriched.contents.map(c => c.text).join('\n\n')
+            : tweet.text;
+          const cleanText = stripHtml(fullText);
+          const excerpt = enriched?.preview_text || cleanText.slice(0, 300);
+          const bodyPreview = cleanText.slice(0, 500);
+          const coverImage = enriched?.cover_media_img_url || null;
+          const readTime = estimateReadTime(cleanText);
 
           // Resolve author (enriched takes priority)
-          const authorSource = enriched?.tweetBy || tweet.tweetBy;
+          const authorSource = enriched?.author || tweet.tweetBy;
 
           // Upsert author
           const { data: author } = await supabaseAdmin
@@ -372,7 +376,7 @@ async function ingestArticles(): Promise<IngestResult> {
             .from('article_stats')
             .update({
               like_count: enriched?.likeCount ?? tweet.likeCount ?? 0,
-              bookmark_count: enriched?.bookmarkCount ?? tweet.bookmarkCount ?? 0,
+              bookmark_count: tweet.bookmarkCount ?? 0,
               comment_count: enriched?.replyCount ?? tweet.replyCount ?? 0,
               share_count: tweet.retweetCount ?? 0,
             })
