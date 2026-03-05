@@ -345,7 +345,104 @@ async function ingestArticles(): Promise<IngestResult> {
   };
 }
 
-// ─── API Route Handler ──────────────────────────────────────────────
+// ─── Single Article Ingestion (by tweet ID) ─────────────────────────
+
+async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; title?: string; error?: string }> {
+  // Load categories
+  const { data: categories } = await supabaseAdmin
+    .from('categories')
+    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
+  const catMap = new Map((categories || []).map(c => [c.slug, c.id]));
+
+  // Dedup check
+  const { data: existing } = await supabaseAdmin
+    .from('articles')
+    .select('id')
+    .eq('x_article_id', tweetId)
+    .maybeSingle();
+
+  if (existing) return { ok: false, error: 'already exists' };
+
+  // Fetch article
+  const article = await probeArticle(tweetId);
+  if (!article) return { ok: false, error: 'not an article or article not found' };
+
+  const fullText = article.contents
+    ? article.contents.map(c => c.text).join('\n\n')
+    : '';
+  const cleanText = stripHtml(fullText);
+  const excerpt = article.preview_text || cleanText.slice(0, 300);
+  const bodyPreview = cleanText.slice(0, 500);
+  const coverImage = article.cover_media_img_url || null;
+  const readTime = estimateReadTime(cleanText);
+  const authorSource = article.author;
+  const tweetUrl = `https://x.com/${authorSource.userName}/status/${tweetId}`;
+
+  // Upsert author
+  const { data: author } = await supabaseAdmin
+    .from('authors')
+    .upsert({
+      x_user_id: authorSource.id,
+      handle: authorSource.userName,
+      display_name: authorSource.name,
+      avatar_url: authorSource.profilePicture,
+      verified: authorSource.isBlueVerified || authorSource.isVerified || false,
+      follower_count: authorSource.followers || 0,
+    }, { onConflict: 'x_user_id' })
+    .select('id')
+    .single();
+
+  if (!author) return { ok: false, error: 'failed to upsert author' };
+
+  const categorySlugs = classifyArticle(article.title, excerpt);
+
+  const { data: newArticle } = await supabaseAdmin
+    .from('articles')
+    .insert({
+      x_article_id: tweetId,
+      x_url: tweetUrl,
+      title: article.title || 'Untitled',
+      excerpt,
+      body_preview: bodyPreview,
+      author_id: author.id,
+      cover_image_url: coverImage,
+      read_time_min: readTime,
+      status: 'published',
+      source: 'twitterapi',
+      published_at: article.createdAt,
+    })
+    .select('id')
+    .single();
+
+  if (!newArticle) return { ok: false, error: 'failed to insert article' };
+
+  // Link categories
+  const categoryLinks = categorySlugs
+    .map(slug => catMap.get(slug))
+    .filter(Boolean)
+    .map(catId => ({ article_id: newArticle.id, category_id: catId! }));
+
+  if (categoryLinks.length > 0) {
+    await supabaseAdmin
+      .from('article_categories')
+      .insert(categoryLinks);
+  }
+
+  // Seed stats
+  await supabaseAdmin
+    .from('article_stats')
+    .update({
+      like_count: article.likeCount ?? 0,
+      bookmark_count: 0,
+      comment_count: article.replyCount ?? 0,
+      share_count: 0,
+    })
+    .eq('article_id', newArticle.id);
+
+  return { ok: true, title: article.title };
+}
+
+// ─── API Route Handlers ─────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   // Verify cron secret (Vercel sends this header)
@@ -358,4 +455,32 @@ export async function GET(req: NextRequest) {
   console.log('Ingestion complete:', result);
 
   return NextResponse.json(result);
+}
+
+// POST /api/ingest — manually submit article(s) by tweet ID
+export async function POST(req: NextRequest) {
+  const authHeader = req.headers.get('authorization');
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await req.json();
+  const tweetIds: string[] = Array.isArray(body.tweet_ids)
+    ? body.tweet_ids
+    : body.tweet_id
+      ? [body.tweet_id]
+      : [];
+
+  if (tweetIds.length === 0) {
+    return NextResponse.json({ error: 'provide tweet_id or tweet_ids[]' }, { status: 400 });
+  }
+
+  const results = [];
+  for (const tid of tweetIds) {
+    const result = await ingestSingleArticle(tid);
+    results.push({ tweet_id: tid, ...result });
+    await sleep(300);
+  }
+
+  return NextResponse.json({ ingested: results });
 }
