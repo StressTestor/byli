@@ -1,6 +1,6 @@
 /**
- * Byline API Hooks
- * 
+ * Linkdrift API Hooks
+ *
  * Lightweight hooks wrapping fetch() to the GraphQL endpoint.
  * No Apollo Client dependency at MVP — keeps the bundle small.
  * Swap in @apollo/client or urql when we need caching/subscriptions.

@@ -1,5 +1,5 @@
 /**
- * Byline Ad System
+ * Linkdrift Ad System
  * 
  * Monetag integration with three layers:
  *   1. MoneytagProvider — loads MultiTag script in <head>, provides context
@@ -93,7 +93,7 @@ export function MoneytagProvider({ children, override }: MoneytagProviderProps) 
 
     script.onload = () => setLoaded(true);
     script.onerror = () => {
-      console.warn('[Byline Ads] Monetag script failed to load');
+      console.warn('[Linkdrift Ads] Monetag script failed to load');
       setLoaded(false);
     };
 
@@ -116,7 +116,7 @@ export function MoneytagProvider({ children, override }: MoneytagProviderProps) 
       }
     } catch (err) {
       // Ad failed to show — not critical, user still redirects
-      console.warn('[Byline Ads] Interstitial failed:', err);
+      console.warn('[Linkdrift Ads] Interstitial failed:', err);
     }
   }, [config.enabled, config.interstitialZone, loaded]);
 

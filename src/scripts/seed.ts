@@ -108,7 +108,7 @@ const SEED_ARTICLES = [
 ];
 
 async function seed() {
-  console.log('Seeding Byline database...\n');
+  console.log('Seeding Linkdrift database...\n');
 
   // 1. Get category map
   const { data: cats } = await supabase.from('categories').select('id, slug');

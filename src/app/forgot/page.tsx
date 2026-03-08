@@ -64,6 +64,8 @@ export default function ForgotPage() {
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
+          name="email"
+          required
         />
 
         <SubmitButton loading={loading}>

@@ -28,7 +28,7 @@ function ConfirmContent() {
       <p className="auth-subtitle" style={{ marginBottom: 0 }}>
         {type === 'reset'
           ? 'Click the link in the email to set a new password. It may take a minute to arrive.'
-          : 'Click the link in the email to verify your account and start using Byline.'}
+          : 'Click the link in the email to verify your account and start using Linkdrift.'}
       </p>
 
       <Link href="/login" className="auth-submit" style={{ marginTop: 28, textDecoration: 'none', textAlign: 'center' }}>
