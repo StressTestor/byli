@@ -62,13 +62,41 @@ export interface ArticleStats {
   updated_at: string;
 }
 
+export type UserRole = 'user' | 'moderator' | 'admin';
+
 export interface Profile {
   id: string;
   username: string | null;
   avatar_url: string | null;
   x_handle: string | null;
   x_user_id: string | null;
+  role: UserRole;
   created_at: string;
+  updated_at: string;
+}
+
+export interface HealthCheck {
+  id: string;
+  check_name: string;
+  status: 'healthy' | 'warning' | 'critical';
+  message: string | null;
+  details: Record<string, any> | null;
+  checked_at: string;
+}
+
+export interface AdminLog {
+  id: string;
+  admin_id: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  metadata: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface SiteSetting {
+  key: string;
+  value: string;
   updated_at: string;
 }
 
