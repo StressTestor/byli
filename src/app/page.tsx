@@ -5,29 +5,91 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { useFeed } from '@/hooks/api';
+import Link from 'next/link';
+import { useFeed, useAuth } from '@/hooks/api';
 import { FeedWithAds, BannerAd, NativeAd, useArticleRedirect } from '@/components/ads/monetag';
+import { SubmitArticleModal } from '@/components/submit-modal';
 
 // ─── Header ─────────────────────────────────────────────────────────
 
 function Header() {
+  const { user, loading, signOut } = useAuth();
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
   return (
-    <header className="border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold tracking-tight text-white">linkdrift</h1>
-          <span className="text-xs text-zinc-600 hidden sm:inline">where X Articles surface</span>
+    <>
+      <header className="border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold tracking-tight text-white">linkdrift</h1>
+            <span className="text-xs text-zinc-600 hidden sm:inline">where X Articles surface</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {loading ? (
+              <div className="h-8 w-20 bg-zinc-800/50 rounded-md animate-pulse" />
+            ) : user ? (
+              <>
+                <button
+                  onClick={() => setShowSubmitModal(true)}
+                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50 flex items-center gap-1.5"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Submit
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 text-sm text-zinc-300 hover:text-white transition-colors px-2 py-1.5 rounded-md hover:bg-zinc-800/50"
+                  >
+                    <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-medium text-white uppercase">
+                      {user.email?.[0] || 'U'}
+                    </div>
+                    <span className="hidden sm:inline text-xs text-zinc-400 max-w-[120px] truncate">
+                      {user.email}
+                    </span>
+                  </button>
+                  {showUserMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                      <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 py-1">
+                        <div className="px-3 py-2 text-xs text-zinc-500 border-b border-zinc-800 truncate">
+                          {user.email}
+                        </div>
+                        <button
+                          onClick={async () => { await signOut(); setShowUserMenu(false); }}
+                          className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
+                        >
+                          Log out
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50"
+                >
+                  Log in
+                </Link>
+                <Link
+                  href="/signup"
+                  className="text-sm text-zinc-950 bg-white hover:bg-zinc-200 transition-colors px-3 py-1.5 rounded-md font-medium"
+                >
+                  Sign up
+                </Link>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50">
-            Log in
-          </button>
-          <button className="text-sm text-zinc-950 bg-white hover:bg-zinc-200 transition-colors px-3 py-1.5 rounded-md font-medium">
-            Sign up
-          </button>
-        </div>
-      </div>
-    </header>
+      </header>
+      {showSubmitModal && (
+        <SubmitArticleModal onClose={() => setShowSubmitModal(false)} />
+      )}
+    </>
   );
 }
 
@@ -253,7 +315,7 @@ export default function FeedPage() {
   const [category, setCategory] = useState<string | null>(null);
   const [sort, setSort] = useState<'FOR_YOU' | 'LATEST' | 'POPULAR'>('FOR_YOU');
 
-  const { articles, loading, hasMore, loadMore, error } = useFeed({
+  const { articles, loading, hasNextPage: hasMore, loadMore, error } = useFeed({
     category: category || undefined,
     sort,
     pageSize: 20,

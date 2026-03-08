@@ -10,7 +10,7 @@ import { createServerClient } from '@supabase/ssr';
  */
 
 // Routes that require authentication
-const PROTECTED_ROUTES = ['/bookmarks', '/settings', '/submit', '/api-keys'];
+const PROTECTED_ROUTES = ['/bookmarks', '/settings', '/submit', '/api-keys', '/admin'];
 
 // Routes that should redirect to / if already authenticated
 const AUTH_ROUTES = ['/login', '/signup', '/forgot'];
