@@ -9,6 +9,7 @@
 
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import { MoneytagProvider } from '@/components/ads/monetag';
 import './globals.css';
 
@@ -40,6 +41,7 @@ export default function RootLayout({
         <MoneytagProvider>
           {children}
         </MoneytagProvider>
+        <Analytics />
       </body>
     </html>
   );
