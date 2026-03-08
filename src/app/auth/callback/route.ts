@@ -4,18 +4,11 @@ import { cookies } from 'next/headers';
 
 /**
  * OAuth Callback Handler
- * 
- * X (Twitter) OAuth redirects here after authorization.
+ *
+ * Handles OAuth redirects from any provider (GitHub, X, etc).
  * Supabase includes a `code` query param that we exchange
  * for a session. If this is a new user, we create their
- * profile and attempt to link their X identity for author claiming.
- * 
- * Flow:
- *   1. X redirects to /auth/callback?code=xxx
- *   2. Exchange code for Supabase session
- *   3. Check if profile exists, create if not
- *   4. Check if X handle matches an author record (auto-claim)
- *   5. Redirect to home (or onboarding if new)
+ * profile and attempt to link their identity for author claiming.
  */
 
 export async function GET(req: NextRequest) {
@@ -53,13 +46,17 @@ export async function GET(req: NextRequest) {
   }
 
   const user = data.session.user;
-  const xMeta = user.user_metadata;
+  const meta = user.user_metadata;
+  const provider = user.app_metadata?.provider;
 
-  // Extract X identity from OAuth metadata
-  const xHandle = xMeta?.user_name || xMeta?.preferred_username || null;
-  const xUserId = xMeta?.provider_id || xMeta?.sub || null;
-  const xName = xMeta?.full_name || xMeta?.name || xHandle || 'User';
-  const xAvatar = xMeta?.avatar_url || xMeta?.picture || null;
+  // Extract identity from OAuth metadata (works for GitHub, X, etc)
+  const xHandle = meta?.user_name || meta?.preferred_username || null;
+  const xUserId = meta?.provider_id || meta?.sub || null;
+  const oAuthName = meta?.full_name || meta?.name || meta?.user_name || xHandle || 'User';
+  const oAuthAvatar = meta?.avatar_url || meta?.picture || null;
+
+  // For GitHub: use login as username fallback
+  const username = meta?.user_name || meta?.preferred_username || `user_${user.id.slice(0, 8)}`;
 
   // Create/update profile
   const { data: existingProfile } = await supabase
@@ -69,25 +66,41 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (!existingProfile) {
-    // New user — create profile
-    await supabase.from('profiles').insert({
+    // New user - create profile
+    const profileData: Record<string, any> = {
       id: user.id,
-      username: xHandle || `user_${user.id.slice(0, 8)}`,
-      avatar_url: xAvatar,
-      x_handle: xHandle,
-      x_user_id: xUserId,
-    });
+      username,
+      avatar_url: oAuthAvatar,
+    };
+    // Only set X fields if this is a Twitter/X OAuth login
+    if (provider === 'twitter') {
+      profileData.x_handle = xHandle;
+      profileData.x_user_id = xUserId;
+    }
+    await supabase.from('profiles').insert(profileData);
   } else {
-    // Existing user — update X identity if not set
-    await supabase.from('profiles').update({
-      x_handle: xHandle,
-      x_user_id: xUserId,
-      ...(xAvatar && { avatar_url: xAvatar }),
-    }).eq('id', user.id);
+    // Existing user - update avatar + X identity if applicable
+    const updateData: Record<string, any> = {};
+    if (oAuthAvatar) updateData.avatar_url = oAuthAvatar;
+    if (provider === 'twitter') {
+      updateData.x_handle = xHandle;
+      updateData.x_user_id = xUserId;
+    }
+    if (Object.keys(updateData).length > 0) {
+      await supabase.from('profiles').update(updateData).eq('id', user.id);
+    }
+  }
+
+  // Auto-promote: if GitHub username matches ADMIN_GITHUB_USERNAME, set role to admin
+  const adminGitHub = process.env.ADMIN_GITHUB_USERNAME;
+  if (provider === 'github' && adminGitHub && username === adminGitHub) {
+    const adminClient = (await import('@/lib/supabase-admin')).supabaseAdmin;
+    await adminClient.from('profiles').update({ role: 'admin' }).eq('id', user.id);
+    console.log(`Auto-promoted ${username} to admin via GitHub OAuth`);
   }
 
   // Auto-claim: if this X handle matches an author record, claim it
-  if (xUserId) {
+  if (provider === 'twitter' && xUserId) {
     const adminClient = (await import('@/lib/supabase-admin')).supabaseAdmin;
 
     const { data: author } = await adminClient
