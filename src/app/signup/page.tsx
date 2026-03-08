@@ -90,6 +90,9 @@ export default function SignupPage() {
           value={username}
           onChange={setUsername}
           autoComplete="username"
+          name="username"
+          required
+          minLength={3}
         />
         <Field
           label="Email"
@@ -98,6 +101,8 @@ export default function SignupPage() {
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
+          name="email"
+          required
         />
         <Field
           label="Password"
@@ -107,6 +112,9 @@ export default function SignupPage() {
           value={password}
           onChange={setPassword}
           autoComplete="new-password"
+          name="password"
+          required
+          minLength={8}
         />
         <PasswordStrength password={password} />
 

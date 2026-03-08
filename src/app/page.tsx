@@ -70,6 +70,13 @@ function Header() {
             ) : (
               <>
                 <Link
+                  href="/signup"
+                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50 flex items-center gap-1.5"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Submit
+                </Link>
+                <Link
                   href="/login"
                   className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50"
                 >
@@ -390,10 +397,10 @@ export default function FeedPage() {
                 <BannerAd size="rectangle" />
               </div>
               <div className="text-[11px] text-zinc-700 space-x-3 px-1">
-                <a href="#" className="hover:text-zinc-500">About</a>
-                <a href="#" className="hover:text-zinc-500">API</a>
-                <a href="#" className="hover:text-zinc-500">Privacy</a>
-                <a href="#" className="hover:text-zinc-500">Terms</a>
+                <Link href="/about" className="hover:text-zinc-500">About</Link>
+                <Link href="/api/graphql" className="hover:text-zinc-500">API</Link>
+                <Link href="/privacy" className="hover:text-zinc-500">Privacy</Link>
+                <Link href="/terms" className="hover:text-zinc-500">Terms</Link>
               </div>
             </div>
           </aside>

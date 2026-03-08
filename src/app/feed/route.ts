@@ -19,8 +19,8 @@ import {
 } from '@/lib/feed';
 
 const META = {
-  title: 'Byline — Latest Articles',
-  description: 'The latest long-form articles from X, curated and categorized by Byline.',
+  title: 'Linkdrift — Latest Articles',
+  description: 'The latest long-form articles from X, curated and categorized by Linkdrift.',
   path: '/feed.xml',
 };
 

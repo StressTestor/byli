@@ -13,11 +13,16 @@ interface FieldProps {
   onChange: (v: string) => void;
   error?: boolean;
   autoComplete?: string;
+  name?: string;
+  required?: boolean;
+  minLength?: number;
 }
 
-export function Field({ label, icon, type = 'text', placeholder, value, onChange, error, autoComplete }: FieldProps) {
+export function Field({ label, icon, type = 'text', placeholder, value, onChange, error, autoComplete, name, required, minLength }: FieldProps) {
   const [show, setShow] = useState(false);
   const isPw = type === 'password';
+
+  const inferredName = name || (type === 'email' ? 'email' : isPw ? 'password' : label?.toLowerCase());
 
   return (
     <div className="field">
@@ -30,6 +35,9 @@ export function Field({ label, icon, type = 'text', placeholder, value, onChange
           value={value}
           onChange={e => onChange(e.target.value)}
           autoComplete={autoComplete || (isPw ? 'current-password' : type === 'email' ? 'email' : 'off')}
+          name={inferredName}
+          required={required}
+          minLength={minLength}
         />
         <span className="field-icon">{icon}</span>
         {isPw && value && (
@@ -94,8 +102,8 @@ export function AuthLayout({ children }: { children: ReactNode }) {
     <div className="auth-wrap">
       <div className="auth-container">
         <div className="auth-logo">
-          <div className="auth-logo-mark">B</div>
-          <span className="auth-logo-text">Byline</span>
+          <div className="auth-logo-mark">L</div>
+          <span className="auth-logo-text">Linkdrift</span>
         </div>
         <div className="auth-card">
           {children}

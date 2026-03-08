@@ -1,5 +1,5 @@
 /**
- * Byline RSS Feed Generator
+ * Linkdrift RSS Feed Generator
  * 
  * Generates RSS 2.0 + Atom feeds for:
  *   /feed.xml          — latest articles (all categories)
@@ -38,7 +38,7 @@ interface FeedMeta {
 
 // ─── Config ──────────────────────────────────────────────────
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://byline.dev';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://linkdrift.app';
 const FEED_LIMIT = 50;
 const CACHE_TTL = 900; // 15 min, matches ingestion cycle
 
@@ -199,7 +199,7 @@ export function generateRSS(items: FeedItem[], meta: FeedMeta): string {
     <author>${escapeXml(item.author_handle)}@x.com (${escapeXml(item.author_name)})</author>
     <pubDate>${pubDate}</pubDate>
 ${categories}
-    <source url="${escapeXml(feedUrl)}">Byline</source>
+    <source url="${escapeXml(feedUrl)}">Linkdrift</source>
   </item>`;
   }).join('\n');
 
@@ -259,7 +259,7 @@ ${item.category_slugs.map(s => `    <category term="${escapeXml(s)}"/>`).join('\
   <id>${SITE_URL}/</id>
   <updated>${updated}</updated>
   <subtitle>${escapeXml(meta.description)}</subtitle>
-  <generator>Byline</generator>
+  <generator>Linkdrift</generator>
 ${entriesXml}
 </feed>`;
 }

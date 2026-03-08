@@ -58,7 +58,7 @@ export default function LoginPage() {
       </div>
 
       <h1 className="auth-title">Welcome back</h1>
-      <p className="auth-subtitle">Sign in to your Byline account</p>
+      <p className="auth-subtitle">Sign in to your Linkdrift account</p>
 
       {error && <AuthMessage type="error">{error}</AuthMessage>}
 
@@ -73,6 +73,8 @@ export default function LoginPage() {
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
+          name="email"
+          required
         />
         <Field
           label="Password"
@@ -81,6 +83,9 @@ export default function LoginPage() {
           placeholder="Enter your password"
           value={password}
           onChange={setPassword}
+          name="password"
+          required
+          minLength={8}
         />
 
         <div className="forgot-row">
@@ -93,7 +98,7 @@ export default function LoginPage() {
       </form>
 
       <div className="auth-footer">
-        New to Byline?{' '}
+        New to Linkdrift?{' '}
         <Link href="/signup" className="auth-link accent">Create an account</Link>
       </div>
     </AuthLayout>

@@ -50,22 +50,22 @@ export async function GET(
     if (slug === 'featured') {
       items = await fetchFeaturedArticles();
       meta = {
-        title: 'Byline — Featured Articles',
+        title: 'Linkdrift — Featured Articles',
         description: 'Editorially curated long-form articles from X.',
         path: `/feed/featured`,
       };
     } else if (slug === 'trending') {
       items = await fetchTrendingArticles();
       meta = {
-        title: 'Byline — Trending This Week',
+        title: 'Linkdrift — Trending This Week',
         description: 'The most engaging X Articles from the past 7 days.',
         path: `/feed/trending`,
       };
     } else if (CATEGORY_LABELS[slug]) {
       items = await fetchCategoryArticles(slug);
       meta = {
-        title: `Byline — ${CATEGORY_LABELS[slug]}`,
-        description: `Latest ${CATEGORY_LABELS[slug].toLowerCase()} articles from X, curated by Byline.`,
+        title: `Linkdrift — ${CATEGORY_LABELS[slug]}`,
+        description: `Latest ${CATEGORY_LABELS[slug].toLowerCase()} articles from X, curated by Linkdrift.`,
         path: `/feed/${slug}`,
       };
     } else {

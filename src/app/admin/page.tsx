@@ -507,6 +507,71 @@ function UserManagement() {
   );
 }
 
+// ─── Health Check History ────────────────────────────────────
+
+function HealthCheckHistory() {
+  const [history, setHistory] = useState<HealthCheck[]>([]);
+  const [loading, setLoading] = useState(true);
+  const supabase = createBrowserClient();
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from('health_checks' as any)
+        .select('*')
+        .order('checked_at', { ascending: false })
+        .limit(10);
+      if (data) setHistory(data as any);
+      setLoading(false);
+    })();
+  }, []);
+
+  const statusColor = (status: string) => {
+    if (status === 'healthy') return 'text-green-400';
+    if (status === 'warning') return 'text-yellow-400';
+    return 'text-red-400';
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-white mb-4">Health Check History</h2>
+      {loading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map(i => <div key={i} className="h-12 bg-zinc-800/30 rounded-lg animate-pulse" />)}
+        </div>
+      ) : history.length === 0 ? (
+        <p className="text-sm text-zinc-500 py-4">No health check history available.</p>
+      ) : (
+        <div className="border border-zinc-800 rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-800 text-left">
+                <th className="px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">Check</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wider hidden sm:table-cell">Message</th>
+                <th className="px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((check, i) => (
+                <tr key={check.id || i} className="border-b border-zinc-800/50 last:border-0">
+                  <td className="px-4 py-3 text-zinc-300">{check.check_name}</td>
+                  <td className={`px-4 py-3 font-medium capitalize ${statusColor(check.status)}`}>{check.status}</td>
+                  <td className="px-4 py-3 text-zinc-500 hidden sm:table-cell truncate max-w-[200px]">{check.message || '-'}</td>
+                  <td className="px-4 py-3 text-zinc-500 text-xs">
+                    {new Date(check.checked_at).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Admin Tabs ──────────────────────────────────────────────
 
 const TABS = [
@@ -515,6 +580,7 @@ const TABS = [
   { key: 'articles', label: 'Articles' },
   { key: 'settings', label: 'Settings' },
   { key: 'users', label: 'Users' },
+  { key: 'history', label: 'History' },
 ] as const;
 
 type TabKey = typeof TABS[number]['key'];
@@ -604,6 +670,7 @@ export default function AdminPage() {
         {activeTab === 'articles' && <ArticleManagement />}
         {activeTab === 'settings' && <SiteSettings />}
         {activeTab === 'users' && <UserManagement />}
+        {activeTab === 'history' && <HealthCheckHistory />}
       </div>
     </div>
   );

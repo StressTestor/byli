@@ -29,8 +29,8 @@ export async function GET(
 
     const authorName = items[0]?.author_name || handle;
     const meta = {
-      title: `Byline — @${handle}`,
-      description: `Articles by ${authorName} on X, indexed by Byline.`,
+      title: `Linkdrift — @${handle}`,
+      description: `Articles by ${authorName} on X, indexed by Linkdrift.`,
       path: `/feed/author/${handle}`,
     };
 
