@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
 import {
-  AuthLayout, Field, XOAuthButton, OrDivider, SubmitButton, AuthMessage,
+  AuthLayout, Field, GitHubOAuthButton, OrDivider, SubmitButton, AuthMessage,
   PasswordStrength, MailIcon, LockIcon, UserIcon, ArrowIcon,
 } from '@/components/auth/shared';
 
@@ -59,9 +59,9 @@ export default function SignupPage() {
     router.push(`/auth/confirm?email=${encodeURIComponent(email)}&type=signup`);
   };
 
-  const handleXAuth = async () => {
+  const handleGitHubAuth = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'twitter',
+      provider: 'github',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (error) setError(error.message);
@@ -78,6 +78,9 @@ export default function SignupPage() {
       <p className="auth-subtitle">Start discovering long-form articles on X</p>
 
       {error && <AuthMessage type="error">{error}</AuthMessage>}
+
+      <GitHubOAuthButton label="Sign up with GitHub" onClick={handleGitHubAuth} />
+      <OrDivider />
 
       <form onSubmit={handleSubmit}>
         <Field

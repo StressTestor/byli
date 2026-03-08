@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
 import {
-  AuthLayout, Field, XOAuthButton, OrDivider, SubmitButton, AuthMessage,
+  AuthLayout, Field, GitHubOAuthButton, OrDivider, SubmitButton, AuthMessage,
   MailIcon, LockIcon, ArrowIcon,
 } from '@/components/auth/shared';
 
@@ -42,9 +42,9 @@ export default function LoginPage() {
     router.refresh();
   };
 
-  const handleXAuth = async () => {
+  const handleGitHubAuth = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'twitter',
+      provider: 'github',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (error) setError(error.message);
@@ -61,6 +61,9 @@ export default function LoginPage() {
       <p className="auth-subtitle">Sign in to your Linkdrift account</p>
 
       {error && <AuthMessage type="error">{error}</AuthMessage>}
+
+      <GitHubOAuthButton onClick={handleGitHubAuth} />
+      <OrDivider />
 
       <form onSubmit={handleSubmit}>
         <Field
