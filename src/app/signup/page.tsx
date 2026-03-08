@@ -79,9 +79,6 @@ export default function SignupPage() {
 
       {error && <AuthMessage type="error">{error}</AuthMessage>}
 
-      <XOAuthButton label="Sign up with X" onClick={handleXAuth} />
-      <OrDivider />
-
       <form onSubmit={handleSubmit}>
         <Field
           label="Username"

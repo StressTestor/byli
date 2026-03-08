@@ -62,9 +62,6 @@ export default function LoginPage() {
 
       {error && <AuthMessage type="error">{error}</AuthMessage>}
 
-      <XOAuthButton onClick={handleXAuth} />
-      <OrDivider />
-
       <form onSubmit={handleSubmit}>
         <Field
           label="Email"
