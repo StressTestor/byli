@@ -177,6 +177,15 @@ export interface Database {
   };
 }
 
+export interface TrendingTopic {
+  id: number;
+  name: string;
+  query: string;
+  rank: number;
+  post_count: string | null;
+  fetched_at: string;
+}
+
 // ─── Composite Types (for API/UI) ────────────────────────────
 
 export interface FeedRow {

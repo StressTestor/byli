@@ -4,11 +4,13 @@
 
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { useFeed, useAuth } from '@/hooks/api';
 import { FeedWithAds, BannerAd, NativeAd, useArticleRedirect } from '@/components/ads/monetag';
 import { SubmitArticleModal } from '@/components/submit-modal';
+import { createBrowserClient } from '@/lib/supabase-browser';
+import type { TrendingTopic } from '@/types/database';
 
 // ─── Header ─────────────────────────────────────────────────────────
 
@@ -301,16 +303,50 @@ function StyledNativeAd() {
 // ─── Trending Sidebar ───────────────────────────────────────────────
 
 function TrendingSidebar() {
+  const [topics, setTopics] = useState<TrendingTopic[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const supabase = createBrowserClient();
+    supabase
+      .from('trending_topics')
+      .select('name, query, rank, post_count')
+      .order('rank', { ascending: true })
+      .limit(10)
+      .then(({ data }) => {
+        setTopics((data as TrendingTopic[]) || []);
+        setLoading(false);
+      });
+  }, []);
+
   return (
     <div className="border border-zinc-800/40 rounded-xl p-4">
       <h3 className="text-sm font-semibold text-zinc-300 mb-3">Trending</h3>
       <div className="space-y-3">
-        {['AI', 'Open Source', 'Startups', 'Web3', 'Security'].map((topic, i) => (
-          <div key={topic} className="flex items-center gap-2">
-            <span className="text-xs text-zinc-600 w-4">{i + 1}</span>
-            <span className="text-sm text-zinc-400 hover:text-white cursor-pointer transition-colors">{topic}</span>
-          </div>
-        ))}
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2 animate-pulse">
+              <div className="h-3 w-4 bg-zinc-800 rounded" />
+              <div className="h-3 w-24 bg-zinc-800 rounded" />
+            </div>
+          ))
+        ) : topics.length === 0 ? (
+          <p className="text-xs text-zinc-600">No trending topics</p>
+        ) : (
+          topics.map((topic) => (
+            <div key={topic.rank} className="flex items-start gap-2">
+              <span className="text-xs text-zinc-600 w-4 pt-0.5">{topic.rank}</span>
+              <div>
+                <span className="text-sm text-zinc-400 hover:text-white cursor-pointer transition-colors block leading-tight">
+                  {topic.name}
+                </span>
+                {topic.post_count && (
+                  <span className="text-[11px] text-zinc-600">{topic.post_count}</span>
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
