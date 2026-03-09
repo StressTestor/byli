@@ -3,34 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
-import { useAuth } from '@/hooks/api';
+import { useAdminProfile } from '@/hooks/useAdminProfile';
 import type { Profile, Submission, Article, SiteSetting, HealthCheck, UserRole } from '@/types/database';
-
-// ─── Admin Guard ─────────────────────────────────────────────
-
-function useAdminProfile() {
-  const { user, loading: authLoading } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const supabase = createBrowserClient();
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) { setLoading(false); return; }
-
-    supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-      .then(({ data }) => {
-        setProfile(data as Profile | null);
-        setLoading(false);
-      });
-  }, [user, authLoading]);
-
-  return { user, profile, loading: authLoading || loading, isAdmin: profile?.role === 'admin' };
-}
 
 // ─── Admin Log Helper ────────────────────────────────────────
 
