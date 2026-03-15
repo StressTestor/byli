@@ -38,7 +38,7 @@ interface FeedMeta {
 
 // ─── Config ──────────────────────────────────────────────────
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://linkdrift.app';
+const SITE_URL = 'https://linkdrift.app';
 const FEED_LIMIT = 50;
 const CACHE_TTL = 900; // 15 min, matches ingestion cycle
 
@@ -188,18 +188,18 @@ export function generateRSS(items: FeedItem[], meta: FeedMeta): string {
       '',
       `By @${item.author_handle}`,
       item.read_time_min ? `${item.read_time_min} min read` : '',
-      `Read on X: ${item.x_url}`,
+      `Original: ${item.x_url}`,
     ].filter(Boolean).join('\n');
 
     return `  <item>
     <title>${escapeXml(item.title)}</title>
-    <link>${escapeXml(item.x_url)}</link>
-    <guid isPermaLink="false">${articleUrl}</guid>
+    <link>${escapeXml(articleUrl)}</link>
+    <guid isPermaLink="true">${escapeXml(articleUrl)}</guid>
     <description>${escapeXml(description)}</description>
     <author>${escapeXml(item.author_handle)}@x.com (${escapeXml(item.author_name)})</author>
     <pubDate>${pubDate}</pubDate>
 ${categories}
-    <source url="${escapeXml(feedUrl)}">Linkdrift</source>
+    <source url="${escapeXml(item.x_url)}">X / @${escapeXml(item.author_handle)}</source>
   </item>`;
   }).join('\n');
 
@@ -240,9 +240,9 @@ export function generateAtom(items: FeedItem[], meta: FeedMeta): string {
 
     return `  <entry>
     <title>${escapeXml(item.title)}</title>
-    <link href="${escapeXml(item.x_url)}" rel="alternate"/>
-    <link href="${escapeXml(articleUrl)}" rel="via"/>
-    <id>${articleUrl}</id>
+    <link href="${escapeXml(articleUrl)}" rel="alternate"/>
+    <link href="${escapeXml(item.x_url)}" rel="related"/>
+    <id>${escapeXml(articleUrl)}</id>
     <published>${published}</published>
     <updated>${published}</updated>
     <author><name>${escapeXml(item.author_name)}</name><uri>https://x.com/${escapeXml(item.author_handle)}</uri></author>
@@ -276,7 +276,7 @@ export function generateJSONFeed(items: FeedItem[], meta: FeedMeta): object {
     language: 'en-US',
     items: items.map(item => ({
       id: `${SITE_URL}/article/${item.id}`,
-      url: item.x_url,
+      url: `${SITE_URL}/article/${item.id}`,
       external_url: item.x_url,
       title: item.title,
       summary: item.excerpt,
@@ -290,7 +290,6 @@ export function generateJSONFeed(items: FeedItem[], meta: FeedMeta): object {
         read_time_min: item.read_time_min,
         like_count: item.like_count,
         featured: item.featured,
-        byline_url: `${SITE_URL}/article/${item.id}`,
       },
     })),
   };
