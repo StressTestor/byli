@@ -1,10 +1,10 @@
 /**
  * Linkdrift Ingestion Worker
  *
- * Discovery strategy: fetch timelines from curated accounts.
- * The timeline response includes an `article` field on each tweet —
- * non-null means it's an X Article with title, preview, cover image inline.
- * No extra API calls needed for discovery.
+ * Two discovery strategies:
+ * 1. Timeline scan: fetch timelines from seed accounts (hardcoded + DB).
+ *    The timeline response has an `article` field on each tweet — non-null = article.
+ * 2. Global search: search for "x.com/i/article" to find articles from any account.
  *
  * Cron config in vercel.json:
  * { "crons": [{ "path": "/api/ingest", "schedule": "0 0 * * *" }] }
@@ -19,31 +19,16 @@ import { classifyArticle, stripHtml, estimateReadTime } from './utils';
 const TWITTERAPI_KEY = process.env.TWITTERAPI_IO_KEY!;
 const TWITTERAPI_BASE = 'https://api.twitterapi.io/twitter';
 
-// Accounts confirmed to post X Articles (article field != null).
-// High-yield accounts are paginated deeper (up to MAX_PAGES).
-const SEED_ACCOUNTS = [
-  // Confirmed article writers (tested 2026-03-05)
-  'Decentralisedco',  // 8/20 tweets are articles — primary source
-  'NotBatmanDev',
-  'DefiIgnas',
-  'CryptoCred',
-  'Rewkang',
-  'tokenterminal',
-  // High-profile accounts — low article rate but worth checking
-  'elonmusk', 'pmarca', 'paulg', 'naval',
-  'VitalikButerin', 'sama', 'balajis',
-  'Snowden', 'jack', 'benthompson',
-  'cdixon', 'patrickc', 'levelsio', 'DHH',
-  'jason', 'BillGates', 'TimCook',
-  'MarioNawfal', 'cb_doge', 'WallStreetSilv',
-  'unusual_whales', 'garrytan', 'Suhail',
-  'mattxwebb', 'nntaleb',
-  'tylercowen', 'matthewball', 'wolfejosh',
+// Fallback seed list — DB seed_accounts table is the primary source.
+// These are checked if the DB query fails or returns empty.
+const FALLBACK_SEED_ACCOUNTS = [
+  'Decentralisedco', 'NotBatmanDev', 'DefiIgnas', 'CryptoCred',
+  'Rewkang', 'tokenterminal', 'sierracatalina', 'RyanHoliday', 'drjimfan',
 ];
 
-// Paginate deeper for high-yield accounts
-const HIGH_YIELD_ACCOUNTS = new Set(['Decentralisedco']);
-const MAX_PAGES = 3; // ~60 tweets per high-yield account
+const MAX_PAGES_DEFAULT = 1;
+const MAX_PAGES_HIGH_YIELD = 3;
+const GLOBAL_SEARCH_PAGES = 3; // ~60 articles from global search
 
 // ─── TwitterAPI.io Types ─────────────────────────────────────────────
 
@@ -158,16 +143,81 @@ async function probeArticle(tweetId: string): Promise<ArticleData | null> {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// ─── Global Article Search ──────────────────────────────────────────
+//
+// Searches X for tweets containing "x.com/i/article" — these are
+// article tweets from ANY account, not just our seed list.
+// This is how we discover new article writers organically.
+
+interface SearchResponse {
+  status: string;
+  data?: { tweets?: TimelineTweet[] };
+  tweets?: TimelineTweet[];
+  has_next_page?: boolean;
+  next_cursor?: string;
+}
+
+async function searchGlobalArticles(maxPages = 1): Promise<TimelineTweet[]> {
+  const allTweets: TimelineTweet[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({
+      queryType: 'Latest',
+      query: 'x.com/i/article',
+    });
+    if (cursor) params.set('cursor', cursor);
+
+    const res = await fetch(
+      `${TWITTERAPI_BASE}/tweet/advanced_search?${params}`,
+      { headers: { 'X-API-Key': TWITTERAPI_KEY } }
+    );
+
+    if (!res.ok) break;
+
+    const json: SearchResponse = await res.json();
+    const tweets = json.data?.tweets || json.tweets || [];
+    const articleTweets = (Array.isArray(tweets) ? tweets : []).filter(t => t.article);
+    allTweets.push(...articleTweets);
+
+    if (!json.has_next_page || !json.next_cursor) break;
+    cursor = json.next_cursor;
+    if (page < maxPages - 1) await sleep(300);
+  }
+
+  return allTweets;
+}
+
+// ─── Seed Account Loader ────────────────────────────────────────────
+
+interface SeedAccount {
+  handle: string;
+  highYield: boolean;
+}
+
+async function loadSeedAccounts(): Promise<SeedAccount[]> {
+  const { data } = await supabaseAdmin
+    .from('seed_accounts')
+    .select('handle, high_yield')
+    .eq('status', 'approved');
+
+  if (data && data.length > 0) {
+    return data.map(row => ({ handle: row.handle, highYield: row.high_yield }));
+  }
+
+  // Fallback to hardcoded list if DB is empty/unreachable
+  return FALLBACK_SEED_ACCOUNTS.map(handle => ({ handle, highYield: false }));
+}
+
 // ─── Shared Article Processing ──────────────────────────────────────
 //
-//  Both cron (GET) and manual (POST) paths converge here.
-//
-//  ┌─────────────┐     ┌──────────────┐
-//  │ timeline    │     │ probeArticle │
-//  │ tweet.article│    │ /article?id  │
-//  └──────┬──────┘     └──────┬───────┘
-//         │ normalize          │
-//         ▼                   ▼
+//  ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
+//  │ timeline    │   │ global search│   │ probeArticle │
+//  │ tweet.article│  │ x.com/i/article  │ /article?id  │
+//  └──────┬──────┘   └──────┬───────┘   └──────┬───────┘
+//         │                 │ normalize          │
+//         └────────┬────────┘                   │
+//                  ▼                            ▼
 //   processArticle(tweetId, articleContent, authorInfo, ...)
 //         │
 //         ├─ upsert author
@@ -289,8 +339,44 @@ interface IngestResult {
   skipped_duplicates: number;
   skipped_unavailable: number;
   errors: number;
+  global_search_articles: number;
   cost_estimate_usd: number;
   duration_ms: number;
+}
+
+async function ingestArticleTweet(
+  tweet: TimelineTweet,
+  handle: string,
+  catMap: Map<string, string>,
+): Promise<'new' | 'duplicate' | 'error'> {
+  if (!tweet.article) return 'error';
+
+  const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
+  const { data: existing } = await supabaseAdmin
+    .from('articles')
+    .select('id')
+    .or(`x_url.eq.${tweetUrl},x_article_id.eq.${tweet.id}`)
+    .maybeSingle();
+
+  if (existing) return 'duplicate';
+
+  const result = await processArticle({
+    tweetId: tweet.id,
+    tweetUrl,
+    article: tweet.article,
+    author: tweet.author,
+    publishedAt: tweet.createdAt,
+    fallbackText: tweet.text,
+    stats: {
+      likeCount: tweet.likeCount ?? 0,
+      bookmarkCount: tweet.bookmarkCount ?? 0,
+      replyCount: tweet.replyCount ?? 0,
+      retweetCount: tweet.retweetCount ?? 0,
+    },
+    catMap,
+  });
+
+  return result.ok ? 'new' : 'error';
 }
 
 async function ingestArticles(): Promise<IngestResult> {
@@ -302,12 +388,15 @@ async function ingestArticles(): Promise<IngestResult> {
   let skippedDuplicates = 0;
   let skippedUnavailable = 0;
   let errors = 0;
+  let globalSearchArticles = 0;
 
   const catMap = await loadCategoryMap();
+  const seedAccounts = await loadSeedAccounts();
 
-  for (const handle of SEED_ACCOUNTS) {
+  // ── Phase 1: Timeline scan of seed accounts ──
+  for (const { handle, highYield } of seedAccounts) {
     try {
-      const pages = HIGH_YIELD_ACCOUNTS.has(handle) ? MAX_PAGES : 1;
+      const pages = highYield ? MAX_PAGES_HIGH_YIELD : MAX_PAGES_DEFAULT;
       const tweets = await fetchUserTimeline(handle, pages);
       accountsChecked++;
 
@@ -318,58 +407,46 @@ async function ingestArticles(): Promise<IngestResult> {
 
       for (const tweet of tweets) {
         tweetsScanned++;
-
-        // Skip non-articles immediately — the timeline includes the article
-        // field inline. No extra API call needed.
         if (!tweet.article) continue;
-
         articlesFound++;
 
-        // Dedup check
-        const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
-        const { data: existing } = await supabaseAdmin
-          .from('articles')
-          .select('id')
-          .or(`x_url.eq.${tweetUrl},x_article_id.eq.${tweet.id}`)
-          .maybeSingle();
-
-        if (existing) {
-          skippedDuplicates++;
-          continue;
-        }
-
-        const result = await processArticle({
-          tweetId: tweet.id,
-          tweetUrl,
-          article: tweet.article,
-          author: tweet.author,
-          publishedAt: tweet.createdAt,
-          fallbackText: tweet.text,
-          stats: {
-            likeCount: tweet.likeCount ?? 0,
-            bookmarkCount: tweet.bookmarkCount ?? 0,
-            replyCount: tweet.replyCount ?? 0,
-            retweetCount: tweet.retweetCount ?? 0,
-          },
-          catMap,
-        });
-
-        if (result.ok) {
-          newArticles++;
-        } else {
-          errors++;
-        }
+        const outcome = await ingestArticleTweet(tweet, handle, catMap);
+        if (outcome === 'new') newArticles++;
+        else if (outcome === 'duplicate') skippedDuplicates++;
+        else errors++;
       }
 
-      await sleep(300); // brief pause between accounts
+      await sleep(300);
     } catch (err) {
       console.error(`Error processing @${handle}:`, err);
       errors++;
     }
   }
 
-  // Cost: only timeline fetches, no article probes needed
-  const costEstimate = accountsChecked * 0.003;
+  // ── Phase 2: Global article search ──
+  // Finds articles from accounts NOT in our seed list.
+  try {
+    const globalTweets = await searchGlobalArticles(GLOBAL_SEARCH_PAGES);
+    for (const tweet of globalTweets) {
+      tweetsScanned++;
+      articlesFound++;
+
+      const handle = tweet.author?.userName || 'unknown';
+      const outcome = await ingestArticleTweet(tweet, handle, catMap);
+      if (outcome === 'new') {
+        newArticles++;
+        globalSearchArticles++;
+      } else if (outcome === 'duplicate') {
+        skippedDuplicates++;
+      } else {
+        errors++;
+      }
+    }
+  } catch (err) {
+    console.error('Global article search error:', err);
+  }
+
+  const costEstimate = (accountsChecked + GLOBAL_SEARCH_PAGES) * 0.003;
 
   return {
     accounts_checked: accountsChecked,
@@ -379,6 +456,7 @@ async function ingestArticles(): Promise<IngestResult> {
     skipped_duplicates: skippedDuplicates,
     skipped_unavailable: skippedUnavailable,
     errors,
+    global_search_articles: globalSearchArticles,
     cost_estimate_usd: Math.round(costEstimate * 10000) / 10000,
     duration_ms: Date.now() - start,
   };
