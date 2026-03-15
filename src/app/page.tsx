@@ -10,7 +10,6 @@ import { useFeed, useAuth } from '@/hooks/api';
 import { FeedWithAds, BannerAd, NativeAd, useArticleRedirect } from '@/components/ads/monetag';
 import { SubmitArticleModal } from '@/components/submit-modal';
 import { createBrowserClient } from '@/lib/supabase-browser';
-import type { TrendingTopic } from '@/types/database';
 
 // ─── Header ─────────────────────────────────────────────────────────
 
@@ -302,49 +301,68 @@ function StyledNativeAd() {
 
 // ─── Trending Sidebar ───────────────────────────────────────────────
 
+interface TrendingArticle {
+  id: string;
+  title: string;
+  like_count: number;
+  author_handle: string;
+  author_name: string;
+}
+
 function TrendingSidebar() {
-  const [topics, setTopics] = useState<TrendingTopic[]>([]);
+  const [articles, setArticles] = useState<TrendingArticle[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const supabase = createBrowserClient();
     supabase
-      .from('trending_topics')
-      .select('name, query, rank, post_count')
-      .order('rank', { ascending: true })
-      .limit(10)
+      .from('articles')
+      .select('id, title, authors!inner(handle, display_name), article_stats!inner(like_count)')
+      .eq('status', 'published')
+      .order('like_count', { referencedTable: 'article_stats', ascending: false })
+      .limit(7)
       .then(({ data }) => {
-        setTopics((data as TrendingTopic[]) || []);
+        const mapped = (data || []).map((row: any) => ({
+          id: row.id,
+          title: row.title,
+          like_count: row.article_stats?.like_count ?? 0,
+          author_handle: row.authors?.handle ?? '',
+          author_name: row.authors?.display_name ?? '',
+        }));
+        setArticles(mapped);
         setLoading(false);
       });
   }, []);
 
   return (
     <div className="border border-zinc-800/40 rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-zinc-300 mb-3">Trending</h3>
+      <h3 className="text-sm font-semibold text-zinc-300 mb-3">Trending on Linkdrift</h3>
       <div className="space-y-3">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-2 animate-pulse">
+            <div key={i} className="flex items-start gap-2 animate-pulse">
               <div className="h-3 w-4 bg-zinc-800 rounded" />
-              <div className="h-3 w-24 bg-zinc-800 rounded" />
-            </div>
-          ))
-        ) : topics.length === 0 ? (
-          <p className="text-xs text-zinc-600">No trending topics</p>
-        ) : (
-          topics.map((topic) => (
-            <div key={topic.rank} className="flex items-start gap-2">
-              <span className="text-xs text-zinc-600 w-4 pt-0.5">{topic.rank}</span>
-              <div>
-                <span className="text-sm text-zinc-400 hover:text-white cursor-pointer transition-colors block leading-tight">
-                  {topic.name}
-                </span>
-                {topic.post_count && (
-                  <span className="text-[11px] text-zinc-600">{topic.post_count}</span>
-                )}
+              <div className="flex-1 space-y-1">
+                <div className="h-3 w-full bg-zinc-800 rounded" />
+                <div className="h-2 w-16 bg-zinc-800 rounded" />
               </div>
             </div>
+          ))
+        ) : articles.length === 0 ? (
+          <p className="text-xs text-zinc-600">No trending articles yet</p>
+        ) : (
+          articles.map((article, i) => (
+            <a key={article.id} href={`/article/${article.id}`} className="flex items-start gap-2 group">
+              <span className="text-xs text-zinc-600 w-4 pt-0.5 shrink-0">{i + 1}</span>
+              <div className="min-w-0">
+                <span className="text-sm text-zinc-400 group-hover:text-white transition-colors block leading-tight line-clamp-2">
+                  {article.title}
+                </span>
+                <span className="text-[11px] text-zinc-600">
+                  @{article.author_handle} · {article.like_count} likes
+                </span>
+              </div>
+            </a>
           ))
         )}
       </div>
