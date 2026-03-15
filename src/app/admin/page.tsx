@@ -251,14 +251,16 @@ function ArticleManagement() {
   };
 
   const changeStatus = async (article: Article, status: 'published' | 'archived') => {
-    await (supabase.from('articles') as any).update({ status }).eq('id', article.id);
+    const { error } = await (supabase.from('articles') as any).update({ status }).eq('id', article.id);
+    if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction('change_article_status', 'article', article.id, { from: article.status, to: status });
     fetchArticles();
   };
 
   const deleteArticle = async (article: Article) => {
     if (!confirm(`Delete "${article.title}"? This cannot be undone.`)) return;
-    await supabase.from('articles').delete().eq('id', article.id);
+    const { error } = await supabase.from('articles').delete().eq('id', article.id);
+    if (error) { alert(`Failed to delete: ${error.message}`); return; }
     await logAdminAction('delete_article', 'article', article.id, { title: article.title });
     fetchArticles();
   };
