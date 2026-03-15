@@ -12,7 +12,7 @@
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
-import { classifyArticle, stripHtml, estimateReadTime } from './utils';
+import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './utils';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -84,6 +84,35 @@ interface ArticleData extends ArticleContent {
   replyCount: number;
   quoteCount: number;
   viewCount: number | string;
+}
+
+// ─── Quality Filters (global search only) ───────────────────────────
+// Seed account articles skip these — they're already vetted.
+// Global search pulls from anyone, so we filter for traction.
+
+const MIN_LIKES = 5;
+const MIN_FOLLOWERS = 100;
+const MIN_ENGAGEMENT = 10; // likes + retweets + replies + bookmarks
+
+function meetsQualityThreshold(tweet: TimelineTweet): boolean {
+  // Language filter: skip non-Latin titles (CJK, Arabic, Cyrillic, etc.)
+  const title = tweet.article?.title || '';
+  if (!isEnglishLike(title)) return false;
+
+  const likes = tweet.likeCount ?? 0;
+  const followers = tweet.author?.followers ?? 0;
+  const totalEngagement =
+    likes +
+    (tweet.retweetCount ?? 0) +
+    (tweet.replyCount ?? 0) +
+    (tweet.bookmarkCount ?? 0);
+
+  // High-value account: verified with 10k+ followers gets a pass
+  if (followers >= 10_000 && (tweet.author?.isBlueVerified || tweet.author?.isVerified)) {
+    return true;
+  }
+
+  return likes >= MIN_LIKES && followers >= MIN_FOLLOWERS && totalEngagement >= MIN_ENGAGEMENT;
 }
 
 // ─── API Helpers ─────────────────────────────────────────────────────
@@ -337,6 +366,7 @@ interface IngestResult {
   articles_found: number;
   new_articles: number;
   skipped_duplicates: number;
+  skipped_low_quality: number;
   skipped_unavailable: number;
   errors: number;
   global_search_articles: number;
@@ -386,6 +416,7 @@ async function ingestArticles(): Promise<IngestResult> {
   let articlesFound = 0;
   let newArticles = 0;
   let skippedDuplicates = 0;
+  let skippedLowQuality = 0;
   let skippedUnavailable = 0;
   let errors = 0;
   let globalSearchArticles = 0;
@@ -424,12 +455,17 @@ async function ingestArticles(): Promise<IngestResult> {
   }
 
   // ── Phase 2: Global article search ──
-  // Finds articles from accounts NOT in our seed list.
+  // Finds articles from anyone on X. Quality-filtered to skip spam/low-traction.
   try {
     const globalTweets = await searchGlobalArticles(GLOBAL_SEARCH_PAGES);
     for (const tweet of globalTweets) {
       tweetsScanned++;
       articlesFound++;
+
+      if (!meetsQualityThreshold(tweet)) {
+        skippedLowQuality++;
+        continue;
+      }
 
       const handle = tweet.author?.userName || 'unknown';
       const outcome = await ingestArticleTweet(tweet, handle, catMap);
@@ -454,6 +490,7 @@ async function ingestArticles(): Promise<IngestResult> {
     articles_found: articlesFound,
     new_articles: newArticles,
     skipped_duplicates: skippedDuplicates,
+    skipped_low_quality: skippedLowQuality,
     skipped_unavailable: skippedUnavailable,
     errors,
     global_search_articles: globalSearchArticles,
