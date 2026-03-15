@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyArticle, stripHtml, estimateReadTime } from './utils';
+import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './utils';
 
 // ─── stripHtml ──────────────────────────────────────────────────────
 
@@ -134,5 +134,47 @@ describe('classifyArticle', () => {
   it('is case-insensitive', () => {
     const cats = classifyArticle('AI BLOCKCHAIN CRYPTO', 'SOFTWARE DEVELOPER');
     expect(cats).toContain('tech');
+  });
+});
+
+// ─── isEnglishLike ──────────────────────────────────────────────────
+
+describe('isEnglishLike', () => {
+  it('accepts English titles', () => {
+    expect(isEnglishLike('The Future of AI')).toBe(true);
+    expect(isEnglishLike('How to Start Investing in Web3')).toBe(true);
+    expect(isEnglishLike('11 Books You Can Finish In One Sitting')).toBe(true);
+  });
+
+  it('rejects Japanese titles', () => {
+    expect(isEnglishLike('フリーランスが3年で消える理由はスキルじゃない')).toBe(false);
+    expect(isEnglishLike('子育てに学ぶコミュニケーションデザイン')).toBe(false);
+  });
+
+  it('rejects Chinese titles', () => {
+    expect(isEnglishLike('走过的路很长很长')).toBe(false);
+    expect(isEnglishLike('宠物文化西方左翼雌化文化渗透的结果')).toBe(false);
+  });
+
+  it('rejects Arabic titles', () => {
+    expect(isEnglishLike('مقال عن الذكاء الاصطناعي')).toBe(false);
+  });
+
+  it('accepts titles with some numbers and punctuation', () => {
+    expect(isEnglishLike('The 21-Mile Corridor')).toBe(true);
+    expect(isEnglishLike("Please Don't Do This To Yourself")).toBe(true);
+  });
+
+  it('accepts mixed Latin with a few non-Latin chars', () => {
+    // Mostly English with an accent or two
+    expect(isEnglishLike('Café Culture in Modern Cities')).toBe(true);
+  });
+
+  it('rejects empty string', () => {
+    expect(isEnglishLike('')).toBe(false);
+  });
+
+  it('rejects strings with only numbers/punctuation', () => {
+    expect(isEnglishLike('123 456!')).toBe(false);
   });
 });

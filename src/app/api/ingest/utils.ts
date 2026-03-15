@@ -50,3 +50,14 @@ export function estimateReadTime(text: string): number {
   const wordCount = text.split(/\s+/).length;
   return Math.max(Math.ceil(wordCount / 250), 2);
 }
+
+// ─── Language Detection ─────────────────────────────────────────────
+
+// Article tweets all have lang=zxx (just a URL), so we check the title.
+// Require majority Latin characters (covers English + European languages).
+export function isEnglishLike(text: string): boolean {
+  const stripped = text.replace(/[\s\d\p{P}\p{S}]/gu, '');
+  if (stripped.length === 0) return false;
+  const latin = stripped.replace(/[^\p{Script=Latin}]/gu, '');
+  return latin.length / stripped.length > 0.5;
+}
