@@ -12,6 +12,7 @@
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
+import { classifyArticle, stripHtml, estimateReadTime } from './utils';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -44,38 +45,24 @@ const SEED_ACCOUNTS = [
 const HIGH_YIELD_ACCOUNTS = new Set(['Decentralisedco']);
 const MAX_PAGES = 3; // ~60 tweets per high-yield account
 
-// ─── Category Classifier (v1: keyword matching) ─────────────────────
+// ─── TwitterAPI.io Types ─────────────────────────────────────────────
 
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  tech: ['ai', 'artificial intelligence', 'machine learning', 'software', 'programming', 'developer', 'code', 'startup', 'saas', 'cloud', 'cybersecurity', 'blockchain', 'crypto', 'gpu', 'data', 'algorithm', 'neural', 'api', 'open source', 'llm', 'model', 'compute'],
-  politics: ['election', 'congress', 'senate', 'democracy', 'policy', 'government', 'regulation', 'legislation', 'political', 'vote', 'campaign', 'partisan', 'liberal', 'conservative', 'law', 'supreme court', 'president', 'governor'],
-  science: ['research', 'study', 'scientist', 'biology', 'physics', 'chemistry', 'climate', 'space', 'nasa', 'genome', 'crispr', 'evolution', 'quantum', 'experiment', 'peer-reviewed', 'nature', 'mars', 'ocean'],
-  business: ['market', 'startup', 'revenue', 'funding', 'investor', 'vc', 'venture', 'ipo', 'stock', 'economy', 'gdp', 'inflation', 'recession', 'profit', 'acquisition', 'merger', 'earnings', 'retail', 'finance'],
-  culture: ['film', 'movie', 'music', 'art', 'book', 'entertainment', 'streaming', 'cultural', 'fashion', 'design', 'creative', 'media', 'pop', 'series', 'album', 'exhibition', 'literary', 'theater'],
-  sports: ['game', 'player', 'team', 'championship', 'league', 'coach', 'nba', 'nfl', 'mlb', 'soccer', 'football', 'basketball', 'tennis', 'olympic', 'match', 'tournament', 'season', 'score'],
-  opinion: ['opinion', 'editorial', 'commentary', 'perspective', 'take', 'argument', 'debate', 'disagree', 'believe', 'think', 'should', 'must', 'ought'],
-};
-
-function classifyArticle(title: string, excerpt: string): string[] {
-  const text = `${title} ${excerpt}`.toLowerCase();
-  const scores: Record<string, number> = {};
-
-  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    scores[category] = keywords.reduce((score, kw) => {
-      const regex = new RegExp(`\\b${kw}\\b`, 'gi');
-      const matches = text.match(regex);
-      return score + (matches?.length || 0);
-    }, 0);
-  }
-
-  return Object.entries(scores)
-    .filter(([, score]) => score > 0)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 2)
-    .map(([cat]) => cat);
+interface AuthorInfo {
+  id: string;
+  userName: string;
+  name: string;
+  profilePicture: string;
+  isBlueVerified: boolean;
+  isVerified?: boolean;
+  followers: number;
 }
 
-// ─── TwitterAPI.io Types ─────────────────────────────────────────────
+interface ArticleContent {
+  title: string;
+  preview_text: string;
+  cover_media_img_url?: string;
+  contents: Array<{ text: string }>;
+}
 
 interface TimelineTweet {
   id: string;
@@ -83,15 +70,7 @@ interface TimelineTweet {
   type: string;
   createdAt: string;
   url: string;
-  author: {
-    id: string;
-    userName: string;
-    name: string;
-    profilePicture: string;
-    isBlueVerified: boolean;
-    isVerified?: boolean;
-    followers: number;
-  };
+  author: AuthorInfo;
   likeCount: number;
   retweetCount: number;
   replyCount: number;
@@ -99,12 +78,7 @@ interface TimelineTweet {
   quoteCount: number;
   viewCount: number | string;
   // Non-null when tweet is an X Article
-  article: {
-    title: string;
-    preview_text: string;
-    cover_media_img_url?: string;
-    contents: Array<{ text: string }>;
-  } | null;
+  article: ArticleContent | null;
 }
 
 interface UserTimelineResponse {
@@ -118,20 +92,8 @@ interface UserTimelineResponse {
   next_cursor?: string;
 }
 
-interface ArticleData {
-  title: string;
-  preview_text: string;
-  cover_media_img_url?: string;
-  contents: Array<{ text: string }>;
-  author: {
-    id: string;
-    userName: string;
-    name: string;
-    profilePicture: string;
-    isBlueVerified: boolean;
-    isVerified?: boolean;
-    followers: number;
-  };
+interface ArticleData extends ArticleContent {
+  author: AuthorInfo;
   createdAt: string;
   likeCount: number;
   replyCount: number;
@@ -194,26 +156,128 @@ async function probeArticle(tweetId: string): Promise<ArticleData | null> {
   return json.article;
 }
 
-// ─── Text Processing ─────────────────────────────────────────────────
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function estimateReadTime(text: string): number {
-  const wordCount = text.split(/\s+/).length;
-  return Math.max(Math.ceil(wordCount / 250), 2);
-}
-
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ─── Shared Article Processing ──────────────────────────────────────
+//
+//  Both cron (GET) and manual (POST) paths converge here.
+//
+//  ┌─────────────┐     ┌──────────────┐
+//  │ timeline    │     │ probeArticle │
+//  │ tweet.article│    │ /article?id  │
+//  └──────┬──────┘     └──────┬───────┘
+//         │ normalize          │
+//         ▼                   ▼
+//   processArticle(tweetId, articleContent, authorInfo, ...)
+//         │
+//         ├─ upsert author
+//         ├─ classify
+//         ├─ insert article
+//         ├─ link categories
+//         └─ upsert stats
+
+interface ProcessArticleInput {
+  tweetId: string;
+  tweetUrl: string;
+  article: ArticleContent;
+  author: AuthorInfo;
+  publishedAt: string;
+  fallbackText: string;
+  stats: {
+    likeCount: number;
+    bookmarkCount: number;
+    replyCount: number;
+    retweetCount: number;
+  };
+  catMap: Map<string, string>;
+}
+
+async function processArticle(input: ProcessArticleInput): Promise<{ ok: boolean; title?: string; error?: string }> {
+  const { tweetId, tweetUrl, article, author: authorSource, publishedAt, fallbackText, stats, catMap } = input;
+
+  const fullText = article.contents
+    ? article.contents.map(c => c.text).join('\n\n')
+    : fallbackText;
+  const cleanText = stripHtml(fullText);
+  const excerpt = article.preview_text || cleanText.slice(0, 300);
+  const bodyPreview = cleanText.slice(0, 500);
+  const coverImage = article.cover_media_img_url || null;
+  const readTime = estimateReadTime(cleanText);
+
+  // Upsert author
+  const { data: author } = await supabaseAdmin
+    .from('authors')
+    .upsert({
+      x_user_id: authorSource.id,
+      handle: authorSource.userName,
+      display_name: authorSource.name,
+      avatar_url: authorSource.profilePicture,
+      verified: authorSource.isBlueVerified || authorSource.isVerified || false,
+      follower_count: authorSource.followers || 0,
+    }, { onConflict: 'x_user_id' })
+    .select('id')
+    .single();
+
+  if (!author) return { ok: false, error: 'failed to upsert author' };
+
+  // Classify
+  const categorySlugs = classifyArticle(article.title, excerpt);
+
+  // Insert article
+  const { data: newArticle } = await supabaseAdmin
+    .from('articles')
+    .insert({
+      x_article_id: tweetId,
+      x_url: tweetUrl,
+      title: article.title || 'Untitled',
+      excerpt,
+      body_preview: bodyPreview,
+      author_id: author.id,
+      cover_image_url: coverImage,
+      read_time_min: readTime,
+      status: 'published',
+      source: 'twitterapi',
+      published_at: publishedAt,
+    })
+    .select('id')
+    .single();
+
+  if (!newArticle) return { ok: false, error: 'failed to insert article' };
+
+  // Link categories
+  const categoryLinks = categorySlugs
+    .map(slug => catMap.get(slug))
+    .filter(Boolean)
+    .map(catId => ({ article_id: newArticle.id, category_id: catId! }));
+
+  if (categoryLinks.length > 0) {
+    await supabaseAdmin
+      .from('article_categories')
+      .insert(categoryLinks);
+  }
+
+  // Upsert engagement stats (upsert avoids race condition with DB triggers)
+  await supabaseAdmin
+    .from('article_stats')
+    .upsert({
+      article_id: newArticle.id,
+      like_count: stats.likeCount,
+      bookmark_count: stats.bookmarkCount,
+      comment_count: stats.replyCount,
+      share_count: stats.retweetCount,
+    }, { onConflict: 'article_id' });
+
+  return { ok: true, title: article.title };
+}
+
+// ─── Category Map Loader ────────────────────────────────────────────
+
+async function loadCategoryMap(): Promise<Map<string, string>> {
+  const { data: categories } = await supabaseAdmin
+    .from('categories')
+    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
+  return new Map((categories || []).map(c => [c.slug, c.id]));
+}
 
 // ─── Ingestion Logic ─────────────────────────────────────────────────
 
@@ -239,11 +303,7 @@ async function ingestArticles(): Promise<IngestResult> {
   let skippedUnavailable = 0;
   let errors = 0;
 
-  // Load category slugs -> IDs map
-  const { data: categories } = await supabaseAdmin
-    .from('categories')
-    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
-  const catMap = new Map((categories || []).map(c => [c.slug, c.id]));
+  const catMap = await loadCategoryMap();
 
   for (const handle of SEED_ACCOUNTS) {
     try {
@@ -278,88 +338,27 @@ async function ingestArticles(): Promise<IngestResult> {
           continue;
         }
 
-        const article = tweet.article;
-        const fullText = article.contents
-          ? article.contents.map(c => c.text).join('\n\n')
-          : tweet.text;
-        const cleanText = stripHtml(fullText);
-        const excerpt = article.preview_text || cleanText.slice(0, 300);
-        const bodyPreview = cleanText.slice(0, 500);
-        const coverImage = article.cover_media_img_url || null;
-        const readTime = estimateReadTime(cleanText);
+        const result = await processArticle({
+          tweetId: tweet.id,
+          tweetUrl,
+          article: tweet.article,
+          author: tweet.author,
+          publishedAt: tweet.createdAt,
+          fallbackText: tweet.text,
+          stats: {
+            likeCount: tweet.likeCount ?? 0,
+            bookmarkCount: tweet.bookmarkCount ?? 0,
+            replyCount: tweet.replyCount ?? 0,
+            retweetCount: tweet.retweetCount ?? 0,
+          },
+          catMap,
+        });
 
-        const authorSource = tweet.author;
-
-        // Upsert author
-        const { data: author } = await supabaseAdmin
-          .from('authors')
-          .upsert({
-            x_user_id: authorSource.id,
-            handle: authorSource.userName,
-            display_name: authorSource.name,
-            avatar_url: authorSource.profilePicture,
-            verified: authorSource.isBlueVerified || authorSource.isVerified || false,
-            follower_count: authorSource.followers || 0,
-          }, { onConflict: 'x_user_id' })
-          .select('id')
-          .single();
-
-        if (!author) {
+        if (result.ok) {
+          newArticles++;
+        } else {
           errors++;
-          continue;
         }
-
-        // Classify
-        const categorySlugs = classifyArticle(article.title, excerpt);
-
-        // Insert article
-        const { data: newArticle } = await supabaseAdmin
-          .from('articles')
-          .insert({
-            x_article_id: tweet.id,
-            x_url: tweetUrl,
-            title: article.title || 'Untitled',
-            excerpt,
-            body_preview: bodyPreview,
-            author_id: author.id,
-            cover_image_url: coverImage,
-            read_time_min: readTime,
-            status: 'published',
-            source: 'twitterapi',
-            published_at: tweet.createdAt,
-          })
-          .select('id')
-          .single();
-
-        if (!newArticle) {
-          errors++;
-          continue;
-        }
-
-        // Link categories
-        const categoryLinks = categorySlugs
-          .map(slug => catMap.get(slug))
-          .filter(Boolean)
-          .map(catId => ({ article_id: newArticle.id, category_id: catId! }));
-
-        if (categoryLinks.length > 0) {
-          await supabaseAdmin
-            .from('article_categories')
-            .insert(categoryLinks);
-        }
-
-        // Seed engagement stats from tweet metrics
-        await supabaseAdmin
-          .from('article_stats')
-          .update({
-            like_count: tweet.likeCount ?? 0,
-            bookmark_count: tweet.bookmarkCount ?? 0,
-            comment_count: tweet.replyCount ?? 0,
-            share_count: tweet.retweetCount ?? 0,
-          })
-          .eq('article_id', newArticle.id);
-
-        newArticles++;
       }
 
       await sleep(300); // brief pause between accounts
@@ -388,11 +387,7 @@ async function ingestArticles(): Promise<IngestResult> {
 // ─── Single Article Ingestion (by tweet ID) ─────────────────────────
 
 async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; title?: string; error?: string }> {
-  // Load categories
-  const { data: categories } = await supabaseAdmin
-    .from('categories')
-    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
-  const catMap = new Map((categories || []).map(c => [c.slug, c.id]));
+  const catMap = await loadCategoryMap();
 
   // Dedup check
   const { data: existing } = await supabaseAdmin
@@ -403,83 +398,27 @@ async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; titl
 
   if (existing) return { ok: false, error: 'already exists' };
 
-  // Fetch article
+  // Fetch article via probe endpoint (manual submission doesn't have timeline context)
   const article = await probeArticle(tweetId);
   if (!article) return { ok: false, error: 'not an article or article not found' };
 
-  const fullText = article.contents
-    ? article.contents.map(c => c.text).join('\n\n')
-    : '';
-  const cleanText = stripHtml(fullText);
-  const excerpt = article.preview_text || cleanText.slice(0, 300);
-  const bodyPreview = cleanText.slice(0, 500);
-  const coverImage = article.cover_media_img_url || null;
-  const readTime = estimateReadTime(cleanText);
-  const authorSource = article.author;
-  const tweetUrl = `https://x.com/${authorSource.userName}/status/${tweetId}`;
+  const tweetUrl = `https://x.com/${article.author.userName}/status/${tweetId}`;
 
-  // Upsert author
-  const { data: author } = await supabaseAdmin
-    .from('authors')
-    .upsert({
-      x_user_id: authorSource.id,
-      handle: authorSource.userName,
-      display_name: authorSource.name,
-      avatar_url: authorSource.profilePicture,
-      verified: authorSource.isBlueVerified || authorSource.isVerified || false,
-      follower_count: authorSource.followers || 0,
-    }, { onConflict: 'x_user_id' })
-    .select('id')
-    .single();
-
-  if (!author) return { ok: false, error: 'failed to upsert author' };
-
-  const categorySlugs = classifyArticle(article.title, excerpt);
-
-  const { data: newArticle } = await supabaseAdmin
-    .from('articles')
-    .insert({
-      x_article_id: tweetId,
-      x_url: tweetUrl,
-      title: article.title || 'Untitled',
-      excerpt,
-      body_preview: bodyPreview,
-      author_id: author.id,
-      cover_image_url: coverImage,
-      read_time_min: readTime,
-      status: 'published',
-      source: 'twitterapi',
-      published_at: article.createdAt,
-    })
-    .select('id')
-    .single();
-
-  if (!newArticle) return { ok: false, error: 'failed to insert article' };
-
-  // Link categories
-  const categoryLinks = categorySlugs
-    .map(slug => catMap.get(slug))
-    .filter(Boolean)
-    .map(catId => ({ article_id: newArticle.id, category_id: catId! }));
-
-  if (categoryLinks.length > 0) {
-    await supabaseAdmin
-      .from('article_categories')
-      .insert(categoryLinks);
-  }
-
-  // Seed stats
-  await supabaseAdmin
-    .from('article_stats')
-    .update({
-      like_count: article.likeCount ?? 0,
-      bookmark_count: 0,
-      comment_count: article.replyCount ?? 0,
-      share_count: 0,
-    })
-    .eq('article_id', newArticle.id);
-
-  return { ok: true, title: article.title };
+  return processArticle({
+    tweetId,
+    tweetUrl,
+    article,
+    author: article.author,
+    publishedAt: article.createdAt,
+    fallbackText: '',
+    stats: {
+      likeCount: article.likeCount ?? 0,
+      bookmarkCount: 0,
+      replyCount: article.replyCount ?? 0,
+      retweetCount: 0,
+    },
+    catMap,
+  });
 }
 
 // ─── API Route Handlers ─────────────────────────────────────────────
