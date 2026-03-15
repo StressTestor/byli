@@ -167,20 +167,23 @@ function SidebarArticles() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const toggleFeatured = async (a: Article) => {
-    await (supabase.from('articles') as any).update({ featured: !a.featured }).eq('id', a.id);
+    const { error } = await (supabase.from('articles') as any).update({ featured: !a.featured }).eq('id', a.id);
+    if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction(a.featured ? 'unfeature_article' : 'feature_article', 'article', a.id, { title: a.title });
     fetch();
   };
 
   const changeStatus = async (a: Article, status: 'published' | 'archived') => {
-    await (supabase.from('articles') as any).update({ status }).eq('id', a.id);
+    const { error } = await (supabase.from('articles') as any).update({ status }).eq('id', a.id);
+    if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction('change_article_status', 'article', a.id, { from: a.status, to: status });
     fetch();
   };
 
   const deleteArticle = async (a: Article) => {
     if (!confirm(`Delete "${a.title}"?`)) return;
-    await supabase.from('articles').delete().eq('id', a.id);
+    const { error } = await supabase.from('articles').delete().eq('id', a.id);
+    if (error) { alert(`Failed to delete: ${error.message}`); return; }
     await logAdminAction('delete_article', 'article', a.id, { title: a.title });
     fetch();
   };
