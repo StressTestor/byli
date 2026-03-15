@@ -13,7 +13,9 @@
     "db:seed": "tsx src/scripts/seed.ts",
     "db:migrate": "supabase migration up",
     "ingest": "tsx src/scripts/ingest-manual.ts",
-    "codegen": "graphql-codegen"
+    "codegen": "graphql-codegen",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@apollo/server": "^4.10.0",
@@ -36,6 +38,7 @@
     "supabase": "^1.200.0",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.0"
   }
 }
