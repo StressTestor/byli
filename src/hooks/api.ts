@@ -59,13 +59,23 @@ interface UseFeedOptions {
 export function useFeed(options: UseFeedOptions = {}) {
   const [articles, setArticles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [endCursor, setEndCursor] = useState<string | null>(null);
 
   const fetchFeed = useCallback(async (cursor?: string) => {
     try {
-      setLoading(true);
+      if (cursor) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+        setArticles([]);
+        setHasNextPage(false);
+        setEndCursor(null);
+        setError(null);
+      }
+
       const data = await gql(`
         query Feed($first: Int, $after: String, $category: String, $sort: FeedSort, $search: String) {
           articles(first: $first, after: $after, category: $category, sort: $sort, search: $search) {
@@ -99,7 +109,7 @@ export function useFeed(options: UseFeedOptions = {}) {
         first: options.pageSize || 20,
         after: cursor || null,
         category: options.category || null,
-        sort: options.sort || 'FOR_YOU',
+        sort: options.sort || 'POPULAR',
         search: options.search || null,
       });
 
@@ -120,8 +130,13 @@ export function useFeed(options: UseFeedOptions = {}) {
       setError(null);
     } catch (err: any) {
       setError(err.message);
+      if (!cursor) {
+        setHasNextPage(false);
+        setEndCursor(null);
+      }
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [options.category, options.sort, options.search, options.pageSize]);
 
@@ -130,10 +145,10 @@ export function useFeed(options: UseFeedOptions = {}) {
   }, [fetchFeed]);
 
   const loadMore = useCallback(() => {
-    if (hasNextPage && endCursor) fetchFeed(endCursor);
-  }, [hasNextPage, endCursor, fetchFeed]);
+    if (hasNextPage && endCursor && !loadingMore) fetchFeed(endCursor);
+  }, [hasNextPage, endCursor, loadingMore, fetchFeed]);
 
-  return { articles, loading, error, hasNextPage, loadMore, refetch: () => fetchFeed() };
+  return { articles, loading, loadingMore, error, hasNextPage, loadMore, refetch: () => fetchFeed() };
 }
 
 // ─── Single Article Hook ─────────────────────────────────────

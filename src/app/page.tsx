@@ -143,22 +143,28 @@ const SORTS = [
   { key: 'POPULAR', label: 'Popular' },
 ] as const;
 
-function SortTabs({ active, onChange }: { active: string; onChange: (sort: 'FOR_YOU' | 'LATEST' | 'POPULAR') => void }) {
+function SortTabs({ active, onChange, isLoggedIn }: { active: string; onChange: (sort: 'FOR_YOU' | 'LATEST' | 'POPULAR') => void; isLoggedIn: boolean }) {
   return (
     <div className="flex gap-1">
-      {SORTS.map(s => (
-        <button
-          key={s.key}
-          onClick={() => onChange(s.key)}
-          className={`px-3 py-1 rounded-md text-sm transition-colors ${
-            active === s.key
-              ? 'text-white bg-zinc-800 font-medium'
-              : 'text-zinc-500 hover:text-zinc-300'
-          }`}
-        >
-          {s.label}
-        </button>
-      ))}
+      {SORTS.map(s => {
+        const disabled = s.key === 'FOR_YOU' && !isLoggedIn;
+        return (
+          <button
+            key={s.key}
+            onClick={() => !disabled && onChange(s.key)}
+            className={`px-3 py-1 rounded-md text-sm transition-colors ${
+              disabled
+                ? 'text-zinc-700 cursor-not-allowed'
+                : active === s.key
+                  ? 'text-white bg-zinc-800 font-medium'
+                  : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+            title={disabled ? 'Sign in for personalized feed' : undefined}
+          >
+            {s.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -373,10 +379,19 @@ function TrendingSidebar() {
 // ─── Feed Page ──────────────────────────────────────────────────────
 
 export default function FeedPage() {
+  const { user, loading: authLoading } = useAuth();
   const [category, setCategory] = useState<string | null>(null);
-  const [sort, setSort] = useState<'FOR_YOU' | 'LATEST' | 'POPULAR'>('FOR_YOU');
+  const [sort, setSort] = useState<'FOR_YOU' | 'LATEST' | 'POPULAR'>('POPULAR');
+  const authResolved = !authLoading;
 
-  const { articles, loading, hasNextPage: hasMore, loadMore, error } = useFeed({
+  // Once auth resolves, set default sort based on login state
+  useEffect(() => {
+    if (authResolved && user) {
+      setSort('FOR_YOU');
+    }
+  }, [authResolved, user]);
+
+  const { articles, loading, loadingMore, hasNextPage: hasMore, loadMore, error } = useFeed({
     category: category || undefined,
     sort,
     pageSize: 20,
@@ -401,7 +416,7 @@ export default function FeedPage() {
         <div className="max-w-2xl mb-5 space-y-3">
           <CategoryTabs active={category} onChange={setCategory} />
           <div className="flex items-center justify-between">
-            <SortTabs active={sort} onChange={setSort} />
+            <SortTabs active={sort} onChange={setSort} isLoggedIn={!!user} />
             <span className="text-xs text-zinc-600">
               {articles.length > 0 && `${articles.length} articles`}
             </span>
@@ -432,13 +447,13 @@ export default function FeedPage() {
               </div>
             )}
 
-            {hasMore && (
+            {hasMore && !loading && (
               <button
                 onClick={loadMore}
-                disabled={loading}
+                disabled={loadingMore}
                 className="w-full mt-6 py-3 text-sm text-zinc-400 border border-zinc-800/60 rounded-xl hover:border-zinc-600 hover:bg-zinc-900/30 transition-all disabled:opacity-50"
               >
-                {loading ? 'Loading...' : 'Load more'}
+                {loadingMore ? 'Loading...' : 'Load more'}
               </button>
             )}
           </main>
