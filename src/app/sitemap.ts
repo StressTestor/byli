@@ -1,6 +1,10 @@
 import type { MetadataRoute } from 'next'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
+// Regenerate the sitemap hourly via ISR so newly ingested articles/authors
+// show up without a redeploy. Without this the sitemap is frozen at build time.
+export const revalidate = 3600
+
 const baseUrl = 'https://linkdrift.app'
 
 const CATEGORIES = [

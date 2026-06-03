@@ -14,7 +14,11 @@ const typeDefs = readFileSync(
 const server = new ApolloServer({
   typeDefs,
   resolvers,
-  introspection: true, // Enable GraphQL Playground in dev
+  // Only expose introspection (schema dump / Playground) outside production.
+  // In prod it hands attackers a full map of the API surface.
+  introspection: process.env.NODE_ENV !== 'production',
+  // TODO: add query depth + rate limiting (needs a plugin dep, e.g.
+  // graphql-depth-limit / @escape.tech/graphql-armor) — out of scope here.
 });
 
 const handler = startServerAndCreateNextHandler<NextRequest>(server, {

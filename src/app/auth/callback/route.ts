@@ -96,7 +96,6 @@ export async function GET(req: NextRequest) {
   if (provider === 'github' && adminGitHub && username === adminGitHub) {
     const adminClient = (await import('@/lib/supabase-admin')).supabaseAdmin;
     await adminClient.from('profiles').update({ role: 'admin' }).eq('id', user.id);
-    console.log(`Auto-promoted ${username} to admin via GitHub OAuth`);
   }
 
   // Auto-claim: if this X handle matches an author record, claim it
@@ -114,8 +113,6 @@ export async function GET(req: NextRequest) {
         claimed: true,
         claimed_by: user.id,
       }).eq('id', author.id);
-
-      console.log(`Auto-claimed author @${xHandle} for user ${user.id}`);
     }
   }
 
