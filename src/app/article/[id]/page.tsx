@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import type { Article, Author, Category, ArticleStats } from '@/types/database';
+import { serializeJsonLd } from './json-ld';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -189,8 +190,9 @@ export default async function ArticlePage({
     share_count: 0,
   };
 
-  // JSON-LD NewsArticle schema
-  // Safe: all values come from the database and JSON.stringify escapes them
+  // JSON-LD NewsArticle schema. Values include untrusted scraped fields (e.g.
+  // title from twitterapi.io), so serializeJsonLd escapes < > & — JSON.stringify
+  // alone does NOT, which would let a </script> in a title break out (stored XSS).
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
@@ -235,7 +237,7 @@ export default async function ArticlePage({
       },
     ],
   };
-  const jsonLdHtml = JSON.stringify(jsonLd);
+  const jsonLdHtml = serializeJsonLd(jsonLd);
 
   return (
     <div className="min-h-screen bg-zinc-950">
