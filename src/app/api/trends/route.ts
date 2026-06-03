@@ -10,6 +10,7 @@
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
+import { safeEqual } from '@/lib/timing-safe-equal';
 
 const TWITTERAPI_KEY = process.env.TWITTERAPI_IO_KEY!;
 const TWITTERAPI_BASE = 'https://api.twitterapi.io/twitter';
@@ -35,7 +36,7 @@ function formatPostCount(count: number | null): string | null {
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!safeEqual(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

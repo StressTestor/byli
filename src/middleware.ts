@@ -59,15 +59,34 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
+  /*
+   * Positive allowlist: ONLY run on routes that need auth.
+   *
+   * The old negative-lookahead matcher ran getUser() (a network round-trip to
+   * Supabase) on every public content page — home, /article, /author,
+   * /category, /search — adding latency and load to the pages we actually want
+   * to rank. Those pages don't need a server-side session: the browser client
+   * refreshes its own JWT, and the session self-heals on the next protected hit.
+   *
+   * Each protected route is listed twice — bare (`/admin`) and nested
+   * (`/admin/:path*`) — so an unauthenticated hit to the bare route still runs
+   * the middleware and gets redirected. Keep this list in sync with
+   * PROTECTED_ROUTES and AUTH_ROUTES above (the in-function `startsWith` checks
+   * are the precise gate; this matcher is the coarse pre-filter).
+   */
   matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization)
-     * - favicon.ico
-     * - public files (icons, images)
-     * - API routes that handle their own auth (graphql, ingest, feed)
-     */
-    '/((?!_next/static|_next/image|favicon.ico|icon.png|api/graphql|api/ingest|feed).*)',
+    '/bookmarks',
+    '/bookmarks/:path*',
+    '/settings',
+    '/settings/:path*',
+    '/submit',
+    '/submit/:path*',
+    '/api-keys',
+    '/api-keys/:path*',
+    '/admin',
+    '/admin/:path*',
+    '/login',
+    '/signup',
+    '/forgot',
   ],
 };

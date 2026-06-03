@@ -13,6 +13,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
 import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './utils';
+import { safeEqual } from '@/lib/timing-safe-equal';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -539,14 +540,13 @@ async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; titl
 // ─── API Route Handlers ─────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  // Verify cron secret (Vercel sends this header)
+  // Verify cron secret (Vercel sends this header). Constant-time compare.
   const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!safeEqual(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const result = await ingestArticles();
-  console.log('Ingestion complete:', result);
 
   return NextResponse.json(result);
 }
@@ -554,7 +554,7 @@ export async function GET(req: NextRequest) {
 // POST /api/ingest — manually submit article(s) by tweet ID
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!safeEqual(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
