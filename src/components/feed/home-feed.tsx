@@ -2,8 +2,20 @@
 
 import { useCallback, useState } from 'react';
 import { gql, useAuth } from '@/hooks/api';
+import { FeedWithAds, NativeAd } from '@/components/ads/monetag';
 import { ArticleCard } from './article-card';
 import type { FeedArticle, FeedSort } from '@/lib/home-feed';
+
+// In-feed native ad, styled to sit among the cards. Renders nothing unless
+// ads are enabled (FeedWithAds short-circuits when disabled).
+function StyledNativeAd() {
+  return (
+    <div className="rounded-xl border border-zinc-800/30 bg-zinc-900/20 p-5">
+      <div className="mb-2 text-[10px] uppercase tracking-wider text-zinc-700">Sponsored</div>
+      <NativeAd className="min-h-[80px]" />
+    </div>
+  );
+}
 
 const CATEGORIES: { slug: string | null; label: string }[] = [
   { slug: null, label: 'All' },
@@ -197,9 +209,10 @@ export function HomeFeed({
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {articles.map((a) => (
-            <ArticleCard key={a.id} article={a} />
-          ))}
+          <FeedWithAds
+            articles={articles.map((a) => <ArticleCard key={a.id} article={a} />)}
+            renderAd={() => <StyledNativeAd />}
+          />
         </div>
       )}
 

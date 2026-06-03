@@ -93,8 +93,10 @@ export async function getHomeFeed(opts: {
     const articles = rows.slice(0, pageSize).map(mapRow);
     const endCursor = articles.length ? articles[articles.length - 1].publishedAt : null;
     return { articles, hasNextPage, endCursor };
-  } catch {
-    // Never let a feed hiccup take down the homepage — render the shell.
+  } catch (err) {
+    // Never let a feed hiccup take down the homepage — render the shell — but
+    // log it so an outage is visible and not mistaken for "no articles".
+    console.error('[home-feed] getHomeFeed failed:', err);
     return { articles: [], hasNextPage: false, endCursor: null };
   }
 }
