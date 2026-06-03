@@ -1,476 +1,89 @@
 /**
- * Linkdrift Feed Page
+ * Linkdrift home — server-rendered feed.
+ *
+ * The first page of articles is fetched on the server (get_feed RPC) and seeded
+ * into the client feed island, so titles + internal links are in the initial
+ * HTML (crawlable, fast LCP). Interactivity (auth header, tabs, sort, load-more)
+ * lives in client islands that hydrate over the server-rendered cards.
  */
 
-'use client';
-
-import React, { useState, useCallback, useEffect } from 'react';
+import type { Metadata } from 'next';
 import Link from 'next/link';
-import { useFeed, useAuth } from '@/hooks/api';
-import { FeedWithAds, BannerAd, NativeAd, useArticleRedirect } from '@/components/ads/monetag';
-import { SubmitArticleModal } from '@/components/submit-modal';
-import { createBrowserClient } from '@/lib/supabase-browser';
+import { getHomeFeed, getTrending, type TrendingItem } from '@/lib/home-feed';
+import { formatCount } from '@/lib/format';
+import { SiteHeader } from '@/components/feed/site-header';
+import { HomeFeed } from '@/components/feed/home-feed';
+import { BannerAd } from '@/components/ads/monetag';
 
-// ─── Header ─────────────────────────────────────────────────────────
+// ISR — regenerate every 15 min (matches the ingestion cycle).
+export const revalidate = 900;
 
-function Header() {
-  const { user, loading, signOut } = useAuth();
-  const [showSubmitModal, setShowSubmitModal] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
+// Now that the homepage is server-rendered it can declare its own canonical.
+export const metadata: Metadata = {
+  alternates: { canonical: '/' },
+};
 
+function TrendingPanel({ items }: { items: TrendingItem[] }) {
+  if (!items.length) return null;
   return (
-    <>
-      <header className="border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold tracking-tight text-white">linkdrift</h1>
-            <span className="text-xs text-zinc-600 hidden sm:inline">where X Articles surface</span>
-          </div>
-          <div className="flex items-center gap-3">
-            {loading ? (
-              <div className="h-8 w-20 bg-zinc-800/50 rounded-md animate-pulse" />
-            ) : user ? (
-              <>
-                <button
-                  onClick={() => setShowSubmitModal(true)}
-                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50 flex items-center gap-1.5"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Submit
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowUserMenu(!showUserMenu)}
-                    className="flex items-center gap-2 text-sm text-zinc-300 hover:text-white transition-colors px-2 py-1.5 rounded-md hover:bg-zinc-800/50"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-medium text-white uppercase">
-                      {user.email?.[0] || 'U'}
-                    </div>
-                    <span className="hidden sm:inline text-xs text-zinc-400 max-w-[120px] truncate">
-                      {user.email}
-                    </span>
-                  </button>
-                  {showUserMenu && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                      <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 py-1">
-                        <div className="px-3 py-2 text-xs text-zinc-500 border-b border-zinc-800 truncate">
-                          {user.email}
-                        </div>
-                        <button
-                          onClick={async () => { await signOut(); setShowUserMenu(false); }}
-                          className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
-                        >
-                          Log out
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/signup"
-                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50 flex items-center gap-1.5"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Submit
-                </Link>
-                <Link
-                  href="/login"
-                  className="text-sm text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-zinc-800/50"
-                >
-                  Log in
-                </Link>
-                <Link
-                  href="/signup"
-                  className="text-sm text-zinc-950 bg-white hover:bg-zinc-200 transition-colors px-3 py-1.5 rounded-md font-medium"
-                >
-                  Sign up
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-      {showSubmitModal && (
-        <SubmitArticleModal onClose={() => setShowSubmitModal(false)} />
-      )}
-    </>
-  );
-}
-
-// ─── Category Tabs ──────────────────────────────────────────────────
-
-const CATEGORIES = [
-  { slug: null, label: 'All' },
-  { slug: 'tech', label: 'Tech', icon: '⚡' },
-  { slug: 'business', label: 'Business', icon: '📈' },
-  { slug: 'science', label: 'Science', icon: '🔬' },
-  { slug: 'politics', label: 'Politics', icon: '🏛' },
-  { slug: 'culture', label: 'Culture', icon: '🎭' },
-  { slug: 'sports', label: 'Sports', icon: '⚽' },
-  { slug: 'opinion', label: 'Opinion', icon: '💬' },
-];
-
-function CategoryTabs({ active, onChange }: { active: string | null; onChange: (slug: string | null) => void }) {
-  return (
-    <div className="flex gap-1 overflow-x-auto no-scrollbar pb-1">
-      {CATEGORIES.map(cat => (
-        <button
-          key={cat.slug ?? 'all'}
-          onClick={() => onChange(cat.slug)}
-          className={`px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition-colors ${
-            active === cat.slug
-              ? 'bg-white text-zinc-950 font-medium'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
-          }`}
-        >
-          {cat.icon && <span className="mr-1">{cat.icon}</span>}
-          {cat.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Sort Tabs ──────────────────────────────────────────────────────
-
-const SORTS = [
-  { key: 'FOR_YOU', label: 'For You' },
-  { key: 'LATEST', label: 'Latest' },
-  { key: 'POPULAR', label: 'Popular' },
-] as const;
-
-function SortTabs({ active, onChange, isLoggedIn }: { active: string; onChange: (sort: 'FOR_YOU' | 'LATEST' | 'POPULAR') => void; isLoggedIn: boolean }) {
-  return (
-    <div className="flex gap-1">
-      {SORTS.map(s => {
-        const disabled = s.key === 'FOR_YOU' && !isLoggedIn;
-        return (
-          <button
-            key={s.key}
-            onClick={() => !disabled && onChange(s.key)}
-            className={`px-3 py-1 rounded-md text-sm transition-colors ${
-              disabled
-                ? 'text-zinc-700 cursor-not-allowed'
-                : active === s.key
-                  ? 'text-white bg-zinc-800 font-medium'
-                  : 'text-zinc-500 hover:text-zinc-300'
-            }`}
-            title={disabled ? 'Sign in for personalized feed' : undefined}
-          >
-            {s.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Article Card ───────────────────────────────────────────────────
-
-interface ArticleCardProps {
-  article: {
-    id: string;
-    title: string;
-    excerpt: string;
-    xUrl: string;
-    author: { handle: string; displayName: string; verified: boolean };
-    stats: { likeCount: number; bookmarkCount: number };
-    readTimeMin: number;
-    publishedAt: string;
-    featured?: boolean;
-  };
-  onNavigate: (url: string) => void;
-}
-
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function ArticleCard({ article, onNavigate }: ArticleCardProps) {
-  return (
-    <article
-      className="group cursor-pointer border border-zinc-800/60 rounded-xl p-5 hover:border-zinc-600 hover:bg-zinc-900/30 transition-all duration-200"
-      onClick={() => onNavigate(article.xUrl)}
-    >
-      {article.featured && (
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-400/80 mb-2.5 uppercase tracking-wider">
-          <svg width="12" height="12" className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-          </svg>
-          Featured
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 text-[13px] text-zinc-500 mb-2">
-        <span className="font-medium text-zinc-300">
-          @{article.author.handle}
-        </span>
-        {article.author.verified && (
-          <svg width="14" height="14" className="w-3.5 h-3.5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-          </svg>
-        )}
-        <span className="text-zinc-600">·</span>
-        <span>{article.readTimeMin} min read</span>
-        <span className="text-zinc-600">·</span>
-        <span>{timeAgo(article.publishedAt)}</span>
-      </div>
-
-      <h2 className="text-[17px] font-semibold text-zinc-100 group-hover:text-white mb-1.5 leading-snug line-clamp-2">
-        {article.title}
-      </h2>
-
-      <p className="text-sm text-zinc-500 leading-relaxed line-clamp-2 mb-3">
-        {article.excerpt}
-      </p>
-
-      <div className="flex items-center gap-4 text-xs text-zinc-600">
-        <span className="flex items-center gap-1 hover:text-zinc-400 transition-colors">
-          <svg width="14" height="14" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-          </svg>
-          {article.stats.likeCount}
-        </span>
-        <span className="flex items-center gap-1 hover:text-zinc-400 transition-colors">
-          <svg width="14" height="14" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
-          </svg>
-          {article.stats.bookmarkCount}
-        </span>
-        <span className="ml-auto flex items-center gap-1 text-zinc-600 group-hover:text-zinc-400 transition-colors">
-          Read on X
-          <svg width="12" height="12" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-          </svg>
-        </span>
-      </div>
-    </article>
-  );
-}
-
-// ─── Loading Skeleton ───────────────────────────────────────────────
-
-function ArticleSkeleton() {
-  return (
-    <div className="border border-zinc-800/40 rounded-xl p-5 animate-pulse">
-      <div className="flex gap-2 mb-3">
-        <div className="h-3 w-20 bg-zinc-800 rounded" />
-        <div className="h-3 w-16 bg-zinc-800 rounded" />
-      </div>
-      <div className="h-5 w-3/4 bg-zinc-800 rounded mb-2" />
-      <div className="h-3 w-full bg-zinc-800/60 rounded mb-1.5" />
-      <div className="h-3 w-2/3 bg-zinc-800/60 rounded mb-3" />
-      <div className="flex gap-4">
-        <div className="h-3 w-8 bg-zinc-800/40 rounded" />
-        <div className="h-3 w-8 bg-zinc-800/40 rounded" />
-      </div>
-    </div>
-  );
-}
-
-// ─── Empty State ────────────────────────────────────────────────────
-
-function EmptyState() {
-  return (
-    <div className="text-center py-16">
-      <div className="text-4xl mb-3">📭</div>
-      <h3 className="text-lg font-medium text-zinc-300 mb-1">No articles yet</h3>
-      <p className="text-sm text-zinc-500">Check back soon or try a different category.</p>
-    </div>
-  );
-}
-
-// ─── Styled Native Ad ───────────────────────────────────────────────
-
-function StyledNativeAd() {
-  return (
-    <div className="border border-zinc-800/30 rounded-xl p-5 bg-zinc-900/20">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-700 mb-2">
-        Sponsored
-      </div>
-      <NativeAd className="min-h-[80px]" />
-    </div>
-  );
-}
-
-// ─── Trending Sidebar ───────────────────────────────────────────────
-
-interface TrendingArticle {
-  id: string;
-  title: string;
-  like_count: number;
-  author_handle: string;
-  author_name: string;
-}
-
-function TrendingSidebar() {
-  const [articles, setArticles] = useState<TrendingArticle[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const supabase = createBrowserClient();
-    supabase
-      .from('articles')
-      .select('id, title, authors!inner(handle, display_name), article_stats!inner(like_count)')
-      .eq('status', 'published')
-      .order('like_count', { referencedTable: 'article_stats', ascending: false })
-      .limit(7)
-      .then(({ data }) => {
-        const mapped = (data || []).map((row: any) => ({
-          id: row.id,
-          title: row.title,
-          like_count: row.article_stats?.like_count ?? 0,
-          author_handle: row.authors?.handle ?? '',
-          author_name: row.authors?.display_name ?? '',
-        }));
-        setArticles(mapped);
-        setLoading(false);
-      });
-  }, []);
-
-  return (
-    <div className="border border-zinc-800/40 rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-zinc-300 mb-3">Trending on Linkdrift</h3>
-      <div className="space-y-3">
-        {loading ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-start gap-2 animate-pulse">
-              <div className="h-3 w-4 bg-zinc-800 rounded" />
-              <div className="flex-1 space-y-1">
-                <div className="h-3 w-full bg-zinc-800 rounded" />
-                <div className="h-2 w-16 bg-zinc-800 rounded" />
-              </div>
-            </div>
-          ))
-        ) : articles.length === 0 ? (
-          <p className="text-xs text-zinc-600">No trending articles yet</p>
-        ) : (
-          articles.map((article, i) => (
-            <a key={article.id} href={`/article/${article.id}`} className="flex items-start gap-2 group">
-              <span className="text-xs text-zinc-600 w-4 pt-0.5 shrink-0">{i + 1}</span>
-              <div className="min-w-0">
-                <span className="text-sm text-zinc-400 group-hover:text-white transition-colors block leading-tight line-clamp-2">
-                  {article.title}
+    <div className="rounded-xl border border-zinc-800/50 p-4">
+      <h2 className="mb-3 font-display text-sm font-semibold text-zinc-300">Trending on linkdrift</h2>
+      <ol className="space-y-3">
+        {items.map((it, i) => (
+          <li key={it.id}>
+            <Link href={`/article/${it.id}`} className="group flex items-start gap-2.5">
+              <span className="w-4 shrink-0 pt-0.5 text-xs tabular-nums text-accent/70">{i + 1}</span>
+              <span className="min-w-0">
+                <span className="block overflow-hidden text-sm leading-tight text-zinc-400 transition-colors group-hover:text-white [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
+                  {it.title}
                 </span>
                 <span className="text-[11px] text-zinc-600">
-                  @{article.author_handle} · {article.like_count} likes
+                  @{it.authorHandle} · {formatCount(it.likeCount)} likes
                 </span>
-              </div>
-            </a>
-          ))
-        )}
-      </div>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
 
-// ─── Feed Page ──────────────────────────────────────────────────────
+function FooterLinks() {
+  return (
+    <div className="space-x-3 px-1 text-[11px] text-zinc-700">
+      <Link href="/about" className="hover:text-zinc-500">About</Link>
+      <Link href="/privacy" className="hover:text-zinc-500">Privacy</Link>
+      <Link href="/terms" className="hover:text-zinc-500">Terms</Link>
+    </div>
+  );
+}
 
-export default function FeedPage() {
-  const { user, loading: authLoading } = useAuth();
-  const [category, setCategory] = useState<string | null>(null);
-  const [sort, setSort] = useState<'FOR_YOU' | 'LATEST' | 'POPULAR'>('POPULAR');
-  const authResolved = !authLoading;
-
-  // Once auth resolves, set default sort based on login state
-  useEffect(() => {
-    if (authResolved && user) {
-      setSort('FOR_YOU');
-    }
-  }, [authResolved, user]);
-
-  const { articles, loading, loadingMore, hasNextPage: hasMore, loadMore, error } = useFeed({
-    category: category || undefined,
-    sort,
-    pageSize: 20,
-  });
-
-  const { redirectToArticle } = useArticleRedirect();
-
-  const articleCards = articles.map((article: any) => (
-    <ArticleCard
-      key={article.id}
-      article={article}
-      onNavigate={redirectToArticle}
-    />
-  ));
+export default async function HomePage() {
+  const [feed, trending] = await Promise.all([
+    getHomeFeed({ sort: 'POPULAR', pageSize: 20 }),
+    getTrending(6),
+  ]);
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <Header />
-
-      <div className="max-w-7xl mx-auto px-4 pt-6 pb-12">
-        {/* Controls */}
-        <div className="max-w-2xl mb-5 space-y-3">
-          <CategoryTabs active={category} onChange={setCategory} />
-          <div className="flex items-center justify-between">
-            <SortTabs active={sort} onChange={setSort} isLoggedIn={!!user} />
-            <span className="text-xs text-zinc-600">
-              {articles.length > 0 && `${articles.length} articles`}
-            </span>
-          </div>
-        </div>
-
+      <SiteHeader />
+      <div className="mx-auto max-w-7xl px-4 pb-12 pt-6">
         <div className="flex gap-8">
-          {/* Main feed */}
-          <main className="flex-1 max-w-2xl">
-            {loading && articles.length === 0 ? (
-              <div className="flex flex-col gap-4">
-                {[1, 2, 3, 4, 5].map(i => <ArticleSkeleton key={i} />)}
-              </div>
-            ) : error ? (
-              <div className="text-center py-16">
-                <div className="text-4xl mb-3">⚠️</div>
-                <h3 className="text-lg font-medium text-zinc-300 mb-1">Something went wrong</h3>
-                <p className="text-sm text-zinc-500">{error}</p>
-              </div>
-            ) : articles.length === 0 ? (
-              <EmptyState />
-            ) : (
-              <div className="flex flex-col gap-3">
-                <FeedWithAds
-                  articles={articleCards}
-                  renderAd={() => <StyledNativeAd />}
-                />
-              </div>
-            )}
-
-            {hasMore && !loading && (
-              <button
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="w-full mt-6 py-3 text-sm text-zinc-400 border border-zinc-800/60 rounded-xl hover:border-zinc-600 hover:bg-zinc-900/30 transition-all disabled:opacity-50"
-              >
-                {loadingMore ? 'Loading...' : 'Load more'}
-              </button>
-            )}
+          <main className="min-w-0 max-w-2xl flex-1">
+            <HomeFeed
+              initialArticles={feed.articles}
+              initialHasNext={feed.hasNextPage}
+              initialCursor={feed.endCursor}
+            />
           </main>
-
-          {/* Sidebar */}
-          <aside className="hidden lg:block w-72 flex-shrink-0">
+          <aside className="hidden w-72 shrink-0 lg:block">
             <div className="sticky top-20 flex flex-col gap-4">
-              <TrendingSidebar />
-              <div className="rounded-xl overflow-hidden">
+              <TrendingPanel items={trending} />
+              <div className="overflow-hidden rounded-xl">
                 <BannerAd size="rectangle" />
               </div>
-              <div className="text-[11px] text-zinc-700 space-x-3 px-1">
-                <Link href="/about" className="hover:text-zinc-500">About</Link>
-                <Link href="/api/graphql" className="hover:text-zinc-500">API</Link>
-                <Link href="/privacy" className="hover:text-zinc-500">Privacy</Link>
-                <Link href="/terms" className="hover:text-zinc-500">Terms</Link>
-              </div>
+              <FooterLinks />
             </div>
           </aside>
         </div>
