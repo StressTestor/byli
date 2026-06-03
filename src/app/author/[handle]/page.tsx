@@ -10,6 +10,9 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
+// Revalidate the curated author listing every 15 minutes (ISR).
+export const revalidate = 900;
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string): string {
@@ -52,9 +55,13 @@ export async function generateMetadata({
   return {
     title: `${author.display_name}'s Articles on Linkdrift`,
     description,
+    alternates: {
+      canonical: `/author/${handle}`,
+    },
     openGraph: {
       title: `${author.display_name}'s Articles on Linkdrift`,
       description,
+      url: `/author/${handle}`,
     },
     twitter: {
       card: 'summary',
