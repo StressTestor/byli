@@ -13,7 +13,7 @@ const GQL_ENDPOINT = '/api/graphql';
 
 // ─── Core GraphQL Fetch ──────────────────────────────────────
 
-async function gql<T = any>(
+export async function gql<T = any>(
   query: string,
   variables?: Record<string, any>
 ): Promise<T> {

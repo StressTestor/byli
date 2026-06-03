@@ -9,13 +9,15 @@
 
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { GeistSans } from 'geist/font/sans';
 import { Analytics } from '@vercel/analytics/next';
 import { MoneytagProvider } from '@/components/ads/monetag';
 import AdminSidebar from '@/components/admin-sidebar';
 import { JsonLd } from './json-ld';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+// Body + UI face. Geist (display) is wired via GeistSans.variable below.
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 
 export const metadata: Metadata = {
   title: {
@@ -94,8 +96,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} bg-zinc-950 text-zinc-100 antialiased`}>
+    <html lang="en" className={`dark ${inter.variable} ${GeistSans.variable}`}>
+      <body className="font-sans bg-zinc-950 text-zinc-100 antialiased">
         <JsonLd />
         <MoneytagProvider>
           {children}
