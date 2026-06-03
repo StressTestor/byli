@@ -34,10 +34,15 @@ export const metadata: Metadata = {
   },
 
   // canonical
+  // NOTE: do NOT set a hardcoded `alternates.canonical` here. Next.js inherits
+  // root-layout metadata into every child route that doesn't override it, so a
+  // canonical of '/' would make /author/*, /category/*, /search, etc. all point
+  // their canonical at the homepage and deindex themselves. Each route declares
+  // its own canonical in generateMetadata.
+  // TODO: the homepage is currently 'use client' so it can't set a canonical
+  // directly; it defaults to self-canonical for now. Give it a proper explicit
+  // canonical when the home page moves to SSR.
   metadataBase: new URL('https://linkdrift.app'),
-  alternates: {
-    canonical: '/',
-  },
 
   // open graph
   openGraph: {

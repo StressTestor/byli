@@ -10,6 +10,9 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
+// Revalidate the curated category listing every 15 minutes (ISR).
+export const revalidate = 900;
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string): string {
@@ -44,9 +47,13 @@ export async function generateMetadata({
   return {
     title: `${category.label} Articles - Linkdrift`,
     description: `Browse ${category.label} articles on Linkdrift. Long-form content from X, curated and categorized.`,
+    alternates: {
+      canonical: `/category/${slug}`,
+    },
     openGraph: {
       title: `${category.label} Articles - Linkdrift`,
       description: `Browse ${category.label} articles on Linkdrift. Long-form content from X, curated and categorized.`,
+      url: `/category/${slug}`,
     },
     twitter: {
       card: 'summary',
