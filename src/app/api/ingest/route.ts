@@ -14,6 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin';
 import { NextResponse, NextRequest } from 'next/server';
 import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './utils';
 import { safeEqual } from '@/lib/timing-safe-equal';
+import { isBlockedTitle } from '@/lib/title-filter';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -272,8 +273,11 @@ interface ProcessArticleInput {
   catMap: Map<string, string>;
 }
 
-async function processArticle(input: ProcessArticleInput): Promise<{ ok: boolean; title?: string; error?: string }> {
+async function processArticle(input: ProcessArticleInput): Promise<{ ok: boolean; title?: string; error?: string; blocked?: boolean }> {
   const { tweetId, tweetUrl, article, author: authorSource, publishedAt, fallbackText, stats, catMap } = input;
+
+  // Blocklisted titles are dropped before any database write.
+  if (isBlockedTitle(article.title)) return { ok: false, blocked: true, error: 'blocked title' };
 
   const fullText = article.contents
     ? article.contents.map(c => c.text).join('\n\n')
@@ -369,6 +373,7 @@ interface IngestResult {
   skipped_duplicates: number;
   skipped_low_quality: number;
   skipped_unavailable: number;
+  skipped_blocked: number;
   errors: number;
   global_search_articles: number;
   cost_estimate_usd: number;
@@ -379,7 +384,7 @@ async function ingestArticleTweet(
   tweet: TimelineTweet,
   handle: string,
   catMap: Map<string, string>,
-): Promise<'new' | 'duplicate' | 'error'> {
+): Promise<'new' | 'duplicate' | 'blocked' | 'error'> {
   if (!tweet.article) return 'error';
 
   const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
@@ -407,6 +412,7 @@ async function ingestArticleTweet(
     catMap,
   });
 
+  if (result.blocked) return 'blocked';
   return result.ok ? 'new' : 'error';
 }
 
@@ -419,6 +425,7 @@ async function ingestArticles(): Promise<IngestResult> {
   let skippedDuplicates = 0;
   let skippedLowQuality = 0;
   let skippedUnavailable = 0;
+  let skippedBlocked = 0;
   let errors = 0;
   let globalSearchArticles = 0;
 
@@ -445,6 +452,7 @@ async function ingestArticles(): Promise<IngestResult> {
         const outcome = await ingestArticleTweet(tweet, handle, catMap);
         if (outcome === 'new') newArticles++;
         else if (outcome === 'duplicate') skippedDuplicates++;
+        else if (outcome === 'blocked') skippedBlocked++;
         else errors++;
       }
 
@@ -475,6 +483,8 @@ async function ingestArticles(): Promise<IngestResult> {
         globalSearchArticles++;
       } else if (outcome === 'duplicate') {
         skippedDuplicates++;
+      } else if (outcome === 'blocked') {
+        skippedBlocked++;
       } else {
         errors++;
       }
@@ -493,6 +503,7 @@ async function ingestArticles(): Promise<IngestResult> {
     skipped_duplicates: skippedDuplicates,
     skipped_low_quality: skippedLowQuality,
     skipped_unavailable: skippedUnavailable,
+    skipped_blocked: skippedBlocked,
     errors,
     global_search_articles: globalSearchArticles,
     cost_estimate_usd: Math.round(costEstimate * 10000) / 10000,
@@ -502,7 +513,7 @@ async function ingestArticles(): Promise<IngestResult> {
 
 // ─── Single Article Ingestion (by tweet ID) ─────────────────────────
 
-async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; title?: string; error?: string }> {
+async function ingestSingleArticle(tweetId: string): Promise<{ ok: boolean; title?: string; error?: string; blocked?: boolean }> {
   const catMap = await loadCategoryMap();
 
   // Dedup check
