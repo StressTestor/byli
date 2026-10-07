@@ -3,6 +3,7 @@
 // resolver uses, so the client island can keep paginating consistently.
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { filterBlockedTitles } from '@/lib/title-filter';
 
 export type FeedSort = 'FOR_YOU' | 'LATEST' | 'POPULAR';
 
@@ -58,13 +59,15 @@ export async function getTrending(limit = 6): Promise<TrendingItem[]> {
       .select('id, title, authors!inner(handle), article_stats!inner(like_count)')
       .eq('status', 'published')
       .order('like_count', { referencedTable: 'article_stats', ascending: false })
-      .limit(limit);
-    return ((data as any[]) || []).map((r) => ({
+      // Over-fetch so blocklisted titles don't leave the panel short.
+      .limit(limit * 2);
+    const items = ((data as any[]) || []).map((r) => ({
       id: r.id,
       title: r.title,
       authorHandle: r.authors?.handle ?? '',
       likeCount: r.article_stats?.like_count ?? 0,
     }));
+    return filterBlockedTitles(items).slice(0, limit);
   } catch {
     return [];
   }
@@ -90,9 +93,10 @@ export async function getHomeFeed(opts: {
     if (error || !data) return { articles: [], hasNextPage: false, endCursor: null };
     const rows = data as any[];
     const hasNextPage = rows.length > pageSize;
-    const articles = rows.slice(0, pageSize).map(mapRow);
-    const endCursor = articles.length ? articles[articles.length - 1].publishedAt : null;
-    return { articles, hasNextPage, endCursor };
+    const page = rows.slice(0, pageSize).map(mapRow);
+    // Cursor comes from the unfiltered page so hidden items can't stall Load more.
+    const endCursor = page.length ? page[page.length - 1].publishedAt : null;
+    return { articles: filterBlockedTitles(page), hasNextPage, endCursor };
   } catch (err) {
     // Never let a feed hiccup take down the homepage — render the shell — but
     // log it so an outage is visible and not mistaken for "no articles".

@@ -13,6 +13,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { filterBlockedTitles } from '@/lib/title-filter';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ async function fetchLatestArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
     p_limit: limit,
   });
   if (error) throw new Error(error.message);
-  return (data || []).map(normalizeFeedRow);
+  return filterBlockedTitles((data || []).map(normalizeFeedRow));
 }
 
 async function fetchCategoryArticles(slug: string, limit = FEED_LIMIT): Promise<FeedItem[]> {
@@ -60,7 +61,7 @@ async function fetchCategoryArticles(slug: string, limit = FEED_LIMIT): Promise<
     p_limit: limit,
   });
   if (error) throw new Error(error.message);
-  return (data || []).map(normalizeFeedRow);
+  return filterBlockedTitles((data || []).map(normalizeFeedRow));
 }
 
 async function fetchFeaturedArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
@@ -78,7 +79,7 @@ async function fetchFeaturedArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
     .limit(limit);
 
   if (error) throw new Error(error.message);
-  return (data || []).map(normalizeJoinedRow);
+  return filterBlockedTitles((data || []).map(normalizeJoinedRow));
 }
 
 async function fetchTrendingArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
@@ -98,7 +99,7 @@ async function fetchTrendingArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
     .limit(limit);
 
   if (error) throw new Error(error.message);
-  return (data || []).map(normalizeJoinedRow);
+  return filterBlockedTitles((data || []).map(normalizeJoinedRow));
 }
 
 async function fetchAuthorArticles(handle: string, limit = FEED_LIMIT): Promise<FeedItem[]> {
@@ -124,7 +125,7 @@ async function fetchAuthorArticles(handle: string, limit = FEED_LIMIT): Promise<
     .limit(limit);
 
   if (error) throw new Error(error.message);
-  return (data || []).map(normalizeJoinedRow);
+  return filterBlockedTitles((data || []).map(normalizeJoinedRow));
 }
 
 // ─── Normalizers ─────────────────────────────────────────────

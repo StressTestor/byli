@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { createSupabaseServer } from '@/lib/supabase-server';
+import { filterBlockedTitles } from '@/lib/title-filter';
 import type { FeedSort, Timeframe, ArticleWithRelations } from '@/types/database';
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -128,7 +129,7 @@ export const resolvers = {
         .limit(limit);
 
       if (error) throw new Error(error.message);
-      return formatConnection((data || []).map(transformArticle), limit);
+      return formatConnection(filterBlockedTitles((data || []).map(transformArticle)), limit);
     },
 
     // All categories
@@ -489,7 +490,10 @@ function formatConnection(items: any[], limit: number) {
 
 function formatFeedConnection(items: any[], limit: number) {
   const hasNextPage = items.length > limit;
-  const edges = items.slice(0, limit).map(item => ({
+  const page = items.slice(0, limit);
+  // Cursor comes from the unfiltered page so hidden items can't stall Load more.
+  const lastRow = page[page.length - 1];
+  const edges = filterBlockedTitles(page).map(item => ({
     node: {
       id: item.id || item.article_id,
       title: item.title,
@@ -524,7 +528,7 @@ function formatFeedConnection(items: any[], limit: number) {
       hasNextPage,
       hasPreviousPage: false,
       startCursor: edges[0]?.cursor || null,
-      endCursor: edges[edges.length - 1]?.cursor || null,
+      endCursor: lastRow ? encodeCursor(lastRow.published_at) : null,
     },
     totalCount: edges.length,
   };
