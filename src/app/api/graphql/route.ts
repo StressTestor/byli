@@ -1,9 +1,8 @@
-import { ApolloServer } from '@apollo/server';
 import { startServerAndCreateNextHandler } from '@as-integrations/next';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { NextRequest } from 'next/server';
-import { resolvers } from '@/graphql/resolvers';
+import { createGraphqlServer, type GraphqlContext } from '@/graphql/server';
 
 // Load schema from .graphql file
 const typeDefs = readFileSync(
@@ -11,17 +10,9 @@ const typeDefs = readFileSync(
   'utf-8'
 );
 
-const server = new ApolloServer({
-  typeDefs,
-  resolvers,
-  // Only expose introspection (schema dump / Playground) outside production.
-  // In prod it hands attackers a full map of the API surface.
-  introspection: process.env.NODE_ENV !== 'production',
-  // TODO: add query depth + rate limiting (needs a plugin dep, e.g.
-  // graphql-depth-limit / @escape.tech/graphql-armor) — out of scope here.
-});
+const server = createGraphqlServer(typeDefs);
 
-const handler = startServerAndCreateNextHandler<NextRequest>(server, {
+const handler = startServerAndCreateNextHandler<NextRequest, GraphqlContext>(server, {
   context: async (req) => {
     // Extract auth token from Authorization header or cookie
     const authHeader = req.headers.get('authorization');
@@ -34,10 +25,8 @@ const handler = startServerAndCreateNextHandler<NextRequest>(server, {
   },
 });
 
-export async function GET(req: NextRequest) {
-  return handler(req);
-}
-
+// POST only: the site's gql() helper always POSTs, and without a GET export
+// Next answers GET with 405.
 export async function POST(req: NextRequest) {
   return handler(req);
 }
