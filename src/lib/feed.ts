@@ -14,6 +14,10 @@
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { filterBlockedTitles } from '@/lib/title-filter';
+import type { FeedSort } from '@/lib/home-feed';
+
+// get_feed only recognizes uppercase sort keys (see FEED_SORTS).
+const LATEST: FeedSort = 'LATEST';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -47,7 +51,7 @@ const CACHE_TTL = 900; // 15 min, matches ingestion cycle
 
 async function fetchLatestArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
   const { data, error } = await supabaseAdmin.rpc('get_feed', {
-    p_sort: 'latest',
+    p_sort: LATEST,
     p_limit: limit,
   });
   if (error) throw new Error(error.message);
@@ -57,7 +61,7 @@ async function fetchLatestArticles(limit = FEED_LIMIT): Promise<FeedItem[]> {
 async function fetchCategoryArticles(slug: string, limit = FEED_LIMIT): Promise<FeedItem[]> {
   const { data, error } = await supabaseAdmin.rpc('get_feed', {
     p_category_slug: slug,
-    p_sort: 'latest',
+    p_sort: LATEST,
     p_limit: limit,
   });
   if (error) throw new Error(error.message);

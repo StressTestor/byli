@@ -89,21 +89,13 @@ function SidebarSubmissions() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const handleApprove = async (sub: Submission) => {
-    await (supabase.from('articles') as any).insert({
-      x_url: sub.url,
-      title: 'Submitted article',
-      status: 'published',
-      source: 'submission',
-      featured: false,
-      author_id: sub.submitted_by,
-    });
-    const { data: { user } } = await supabase.auth.getUser();
-    await (supabase.from('submissions') as any).update({
-      status: 'approved',
-      reviewed_by: user?.id || null,
-      reviewed_at: new Date().toISOString(),
-    }).eq('id', sub.id);
-    await logAdminAction('approve_submission', 'submission', sub.id, { url: sub.url });
+    const res = await window.fetch(`/api/admin/submissions/${sub.id}/approve`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(`Approve failed: ${body.error || res.status}`);
+      return;
+    }
+    await logAdminAction('approve_submission', 'submission', sub.id, { url: sub.url, article_id: body.articleId });
     fetch();
   };
 

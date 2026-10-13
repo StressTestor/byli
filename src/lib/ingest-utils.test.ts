@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './utils';
+import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './ingest-utils';
 
 // ─── stripHtml ──────────────────────────────────────────────────────
 

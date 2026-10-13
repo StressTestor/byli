@@ -5,7 +5,10 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { filterBlockedTitles } from '@/lib/title-filter';
 
-export type FeedSort = 'FOR_YOU' | 'LATEST' | 'POPULAR';
+// get_feed matches these exact uppercase strings; anything else silently
+// falls through to the FOR_YOU score ordering. Always pass one of these.
+export const FEED_SORTS = ['FOR_YOU', 'LATEST', 'POPULAR'] as const;
+export type FeedSort = (typeof FEED_SORTS)[number];
 
 export interface FeedArticle {
   id: string;
