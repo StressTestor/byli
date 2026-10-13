@@ -307,7 +307,10 @@ async function loadSeedAccounts(): Promise<SeedAccount[]> {
   const { data, error } = await supabaseAdmin
     .from('seed_accounts')
     .select('handle, high_yield')
-    .eq('status', 'approved');
+    .eq('status', 'approved')
+    // Least recently checked first, so accounts cut off by the time budget
+    // lead the next run instead of being skipped every night.
+    .order('last_checked_at', { ascending: true, nullsFirst: true });
 
   if (error) {
     const message = `seed_accounts query failed: ${dbErrorMessage(error)}`;
@@ -323,6 +326,14 @@ async function loadSeedAccounts(): Promise<SeedAccount[]> {
     `[ingest] seed_accounts has no approved rows; using ${FALLBACK_SEED_ACCOUNTS.length} fallback handles`,
   );
   return FALLBACK_SEED_ACCOUNTS.map(handle => ({ handle, highYield: false }));
+}
+
+async function markSeedChecked(handle: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from('seed_accounts')
+    .update({ last_checked_at: new Date().toISOString() })
+    .eq('handle', handle);
+  if (error) console.error(`[ingest] stamping @${handle} last_checked_at failed: ${dbErrorMessage(error)}`);
 }
 
 // ─── Shared Article Processing ──────────────────────────────────────
@@ -623,6 +634,7 @@ export async function ingestArticles(
           const pages = highYield ? MAX_PAGES_HIGH_YIELD : MAX_PAGES_DEFAULT;
           const tweets = await fetchUserTimeline(handle, pages, delayMs);
           stats.accounts_checked++;
+          await markSeedChecked(handle);
 
           if (tweets.length === 0) {
             stats.skipped_unavailable++;

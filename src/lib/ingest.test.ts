@@ -31,6 +31,7 @@ vi.mock('@/lib/supabase-admin', () => {
       update: (p: any) => { q.op = 'update'; q.payload = p; return b; },
       eq: (c: string, v: unknown) => { q.filters.push(['eq', c, v]); return b; },
       or: (f: string) => { q.filters.push(['or', f]); return b; },
+      order: (c: string, o: unknown) => { q.filters.push(['order', c, o]); return b; },
       maybeSingle: exec,
       single: exec,
       then: (res: any, rej: any) => exec().then(res, rej),
@@ -378,5 +379,17 @@ describe('runIngestion (cron run record)', () => {
     expect(timelineCalls()).toEqual(['alice', 'bob']);
     expect(runWrites().filter(q => q.op === 'update')).toEqual([]);
     expect(loggedText()).toContain('ingest_runs');
+  });
+});
+
+describe('seed account rotation', () => {
+  it('checks the least recently checked accounts first and stamps each one', async () => {
+    await ingestArticles(fast);
+    const seedRead = db.calls.find(q => q.table === 'seed_accounts' && q.op === 'select');
+    expect(seedRead?.filters).toContainEqual(['order', 'last_checked_at', { ascending: true, nullsFirst: true }]);
+
+    const stamps = db.calls.filter(q => q.table === 'seed_accounts' && q.op === 'update');
+    expect(stamps.map(q => q.filters.find(f => f[1] === 'handle')?.[2]).sort()).toEqual(['alice', 'bob']);
+    expect(stamps[0].payload).toHaveProperty('last_checked_at');
   });
 });
