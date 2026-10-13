@@ -134,15 +134,17 @@ async function fetchAuthorArticles(handle: string, limit = FEED_LIMIT): Promise<
 
 // ─── Normalizers ─────────────────────────────────────────────
 
+// Matches the live get_feed return shape (id, author_display_name, no
+// categories), which differs from the get_feed in 001_initial_schema.sql.
 function normalizeFeedRow(row: any): FeedItem {
   return {
-    id: row.article_id,
+    id: row.id,
     title: row.title,
     excerpt: row.excerpt,
     x_url: row.x_url,
     author_handle: row.author_handle,
-    author_name: row.author_name,
-    category_slugs: row.category_slugs || [],
+    author_name: row.author_display_name || row.author_handle,
+    category_slugs: [],
     published_at: row.published_at,
     read_time_min: row.read_time_min,
     like_count: row.like_count || 0,
