@@ -137,7 +137,8 @@ function SubmissionQueue() {
         reviewed_by: user?.id || null,
         reviewed_at: new Date().toISOString(),
       })
-      .eq('id', submission.id);
+      .eq('id', submission.id)
+      .eq('status', 'pending');
 
     await logAdminAction('reject_submission', 'submission', submission.id, { url: submission.url });
     fetchSubmissions();

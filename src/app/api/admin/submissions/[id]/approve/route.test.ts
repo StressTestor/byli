@@ -28,6 +28,8 @@ vi.mock('@/lib/supabase-admin', () => {
       state.updates.push({ table, row });
       const u: any = {};
       u.eq = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
+      u.is = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
+      u.then = (resolve: (v: unknown) => void) => resolve({ error: null });
       u.select = async () => ({ data: state.lostRace ? [] : [{ id: 's1' }], error: null });
       return u;
     };
@@ -70,23 +72,26 @@ describe('approve submission route', () => {
     expect(res.status).toBe(200);
     expect(state.ingest).toHaveBeenCalledWith('2027172169336476151');
     expect(state.upserts[0]).toMatchObject({ table: 'article_categories', row: { article_id: 'art-1', category_id: 'c1' } });
+    // Claim first, then link the article once it exists.
     expect(state.updates[0]).toMatchObject({
       table: 'submissions',
-      row: { status: 'approved', article_id: 'art-1', reviewed_by: 'admin-1' },
+      row: { status: 'approved', reviewed_by: 'admin-1' },
     });
+    expect(state.updates[1]).toMatchObject({ table: 'submissions', row: { article_id: 'art-1' } });
   });
 
   it('links an article that already exists', async () => {
     state.ingest = vi.fn(async () => ({ ok: false, error: 'already exists', articleId: 'old-1' }));
     const res = await call();
     expect(res.status).toBe(200);
-    expect(state.updates[0].row.article_id).toBe('old-1');
+    expect(state.updates[1].row.article_id).toBe('old-1');
   });
 
-  it('does not mark approved when ingest fails', async () => {
+  it('puts the submission back in the queue when ingest fails', async () => {
     state.ingest = vi.fn(async () => ({ ok: false, error: 'not an article or article not found' }));
     expect((await call()).status).toBe(502);
-    expect(state.updates).toEqual([]);
+    expect(state.updates.map((u) => u.row.status)).toEqual(['approved', 'pending']);
+    expect(state.updateFilters).toContainEqual(['article_id', null]);
   });
 
   it('refuses non-status URLs and already-reviewed submissions', async () => {
@@ -97,13 +102,15 @@ describe('approve submission route', () => {
     expect(state.ingest).not.toHaveBeenCalled();
   });
 
-  it('only flips a submission that is still pending', async () => {
+  it('claims only a submission that is still pending, before ingesting', async () => {
     expect((await call()).status).toBe(200);
     expect(state.updateFilters).toContainEqual(['status', 'pending']);
 
     state.lostRace = true;
+    state.ingest.mockClear();
     const res = await call();
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/someone else/);
+    expect(state.ingest).not.toHaveBeenCalled();
   });
 });

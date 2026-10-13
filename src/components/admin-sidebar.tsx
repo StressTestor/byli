@@ -106,7 +106,7 @@ function SidebarSubmissions() {
       status: 'rejected',
       reviewed_by: user?.id || null,
       reviewed_at: new Date().toISOString(),
-    }).eq('id', sub.id);
+    }).eq('id', sub.id).eq('status', 'pending');
     await logAdminAction('reject_submission', 'submission', sub.id, { url: sub.url });
     fetch();
   };

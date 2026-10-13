@@ -17,6 +17,9 @@ describe('safeNextPath', () => {
     ['absolute url', 'https://evil.com/'],
     ['javascript', 'javascript:alert(1)'],
     ['relative', 'article/abc'],
+    ['dot segment to protocol-relative', '/..//evil.com'],
+    ['dot segment variant', '/.//evil.com'],
+    ['nested dot segments', '/a/../..//evil.com'],
   ])('falls back to / for %s', (_label, raw) => {
     expect(safeNextPath(raw)).toBe('/');
   });

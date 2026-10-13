@@ -9,7 +9,9 @@ export function safeNextPath(raw: string | null): string {
   try {
     const url = new URL(raw, PLACEHOLDER_ORIGIN);
     if (url.origin !== PLACEHOLDER_ORIGIN) return '/';
-    return `${url.pathname}${url.search}${url.hash}`;
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    // Re-check after normalization: "/..//evil.com" resolves to "//evil.com".
+    return path.startsWith('//') ? '/' : path;
   } catch {
     return '/';
   }
