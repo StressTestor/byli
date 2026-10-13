@@ -152,11 +152,11 @@ Functions: `get_feed`, `search_articles`, `feed_score` (feed ranking), `is_admin
 
 ### migrations
 
-- location: `supabase/migrations/<version>_<name>.sql`. Each file is byte-identical to production's `supabase_migrations.schema_migrations` entry for that version.
+- location: `supabase/migrations/<version>_<name>.sql`, one file per version in production's `supabase_migrations.schema_migrations`. Each file is byte-identical to production's stored statement, except `20260303181614` and `20260303182333`. Those two were edited so the history replays on a fresh project (see gotchas). Production already ran those versions, so the edits never run there.
 - applying: changes have gone through the Supabase MCP `apply_migration` (or `supabase db push`). After applying, name the repo file with the version production recorded, so history stays 1:1.
 - types: regenerate `src/types/supabase.ts` after any schema change.
 - ordering: apply additive migrations (new tables) before merging the code that uses them. Merge code before applying migrations that remove things it depends on.
-- not yet verified: replaying the full history onto an empty project with `supabase db reset`.
+- replay: verified 2026-10-13. `supabase start` on an empty local stack applies all 28 migrations, and the resulting catalog (tables, functions with security mode and search_path, policies, triggers, indexes, `profiles` column grants, function EXECUTE grants, extension schemas) md5-matches production. The CLI in `devDependencies` (1.226) only supports Postgres 15 locally; production runs 17.
 
 ## environment variables
 
@@ -219,6 +219,9 @@ Config lives in `vercel.json`. Run it on demand from Vercel → byli → Setting
 - **browser client must be `createBrowserClient` from `@supabase/ssr`** -> the vanilla supabase-js client keeps the PKCE verifier in localStorage and the callback can't read it -> use `lib/supabase-browser.ts`.
 - **supabase-js doesn't throw on RPC or query errors** -> `try/catch` around `.rpc()` never fires -> check `error` on every result.
 - **a column-level `REVOKE` is a no-op while a table-level grant exists** -> revoke the table grant, then grant specific columns.
+- **fresh-project replay failed at `ALTER EXTENSION pg_trgm SET SCHEMA extensions`** -> on current Supabase stacks privileged extensions are created by `supabase_admin`, so `postgres` can't move them -> `20260303181614` creates pg_trgm in `extensions` directly and `20260303182333` only moves it when needed.
+- **`pnpm install` skipped the Supabase CLI download** -> pnpm 10 blocks dependency build scripts by default -> `pnpm.onlyBuiltDependencies: ["supabase"]` in package.json.
+- **trigger functions don't need caller EXECUTE** -> Postgres checks EXECUTE on a trigger function when the trigger is created, not when it fires -> revoking EXECUTE on `handle_new_user()` from every client role is safe; signup as `supabase_auth_admin` still creates the profile (verified on the local replay).
 - **user_metadata is user-editable** (`auth.updateUser`) -> never use it for authorization -> read `user.identities` (provider-set). `UserIdentity.id` is the provider's id; `identity_id` is the auth row UUID.
 - **local `.env.local` points at a placeholder Supabase URL** -> local runs can't reach production data -> smoke against a preview deploy instead.
 - **zsh and dynamic route paths** -> quote them in git commands: `git add 'src/app/feed/[slug]/route.ts'`.
