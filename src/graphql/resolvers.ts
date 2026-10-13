@@ -1,8 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { createSupabaseServer } from '@/lib/supabase-server';
 import { filterBlockedTitles } from '@/lib/title-filter';
-import type { FeedSort, Timeframe, ArticleWithRelations } from '@/types/database';
-import type { Enums } from '@/types/supabase';
+import type { Enums, Tables } from '@/types/supabase';
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -74,7 +73,7 @@ export const resolvers = {
           p_offset: offset,
         });
         if (error) throw new Error(error.message);
-        return formatSearchConnection((data || []) as any[], limit, offset);
+        return formatOffsetConnection(data || [], limit, offset, transformSearchRow);
       }
 
       // Use feed function for standard queries
@@ -122,9 +121,10 @@ export const resolvers = {
       return transformAuthor(data);
     },
 
-    // Trending articles
+    // Trending articles. Ordered by like count, so it pages by offset.
     trending: async (_: any, args: { timeframe?: string; first?: number; after?: string }) => {
       const limit = Math.min(args.first || 20, 50);
+      const offset = args.after ? decodeOffsetCursor(args.after) : 0;
       const since = timeframeFilter(args.timeframe || 'WEEK');
 
       const { data, error } = await supabaseAdmin
@@ -138,10 +138,11 @@ export const resolvers = {
         .eq('status', 'published')
         .gte('published_at', since)
         .order('stats(like_count)', { ascending: false })
-        .limit(limit);
+        // range() is inclusive: limit + 1 rows, the extra one decides hasNextPage.
+        .range(offset, offset + limit);
 
       if (error) throw new Error(error.message);
-      return formatConnection(filterBlockedTitles((data || []).map(transformArticle)), limit);
+      return formatOffsetConnection(data || [], limit, offset, transformArticle);
     },
 
     // All categories
@@ -163,10 +164,7 @@ export const resolvers = {
         countMap[row.category_id] = (countMap[row.category_id] || 0) + 1;
       });
 
-      return (data || []).map(cat => ({
-        ...cat,
-        articleCount: countMap[cat.id] || 0,
-      }));
+      return (data || []).map(cat => transformCategory(cat, countMap[cat.id] || 0));
     },
 
     // Current user profile
@@ -181,7 +179,7 @@ export const resolvers = {
         .single();
 
       if (error) throw new Error(error.message);
-      return { ...data, id: user.id };
+      return transformUser(data);
     },
 
     // User's submissions
@@ -201,7 +199,7 @@ export const resolvers = {
 
       const { data, error } = await query;
       if (error) throw new Error(error.message);
-      return data || [];
+      return (data || []).map(transformSubmission);
     },
   },
 
@@ -310,7 +308,7 @@ export const resolvers = {
         .single();
 
       if (error) throw new Error(error.message);
-      return data;
+      return transformSubmission(data);
     },
 
     updateProfile: async (_: any, args: { input: { username?: string; avatarUrl?: string } }) => {
@@ -328,7 +326,7 @@ export const resolvers = {
         .single();
 
       if (error) throw new Error(error.message);
-      return data;
+      return transformUser(data);
     },
 
     createApiKey: async (_: any, args: { label?: string }) => {
@@ -355,7 +353,7 @@ export const resolvers = {
       if (error) throw new Error(error.message);
 
       // Return with the raw key (only time it's visible)
-      return { ...data, key: rawKey };
+      return transformApiKey(data, rawKey);
     },
 
     revokeApiKey: async (_: any, args: { id: string }) => {
@@ -411,6 +409,20 @@ export const resolvers = {
     },
   },
 
+  Category: {
+    // categories() precomputes counts for the whole list; categories embedded
+    // in articles and submissions are counted on demand.
+    articleCount: async (parent: { id: string; articleCount?: number }) => {
+      if (typeof parent.articleCount === 'number') return parent.articleCount;
+      const { count, error } = await supabaseAdmin
+        .from('article_categories')
+        .select('category_id', { count: 'exact', head: true })
+        .eq('category_id', parent.id);
+      if (error) throw new Error(error.message);
+      return count ?? 0;
+    },
+  },
+
   Author: {
     articles: async (parent: any, args: { first?: number; after?: string }) => {
       const limit = Math.min(args.first || 10, 50);
@@ -449,7 +461,7 @@ function transformArticle(raw: any): any {
     excerpt: raw.excerpt,
     bodyPreview: raw.body_preview,
     author: raw.author ? transformAuthor(raw.author) : null,
-    categories: raw.categories?.map((ac: any) => ac.category || ac) || [],
+    categories: (raw.categories || []).map((ac: any) => transformCategory(ac.category || ac)),
     stats: raw.stats ? {
       likeCount: raw.stats.like_count || 0,
       bookmarkCount: raw.stats.bookmark_count || 0,
@@ -460,7 +472,7 @@ function transformArticle(raw: any): any {
     } : { likeCount: 0, bookmarkCount: 0, commentCount: 0, shareCount: 0, ratingCount: 0, avgRating: 0 },
     coverImageUrl: raw.cover_image_url,
     readTimeMin: raw.read_time_min,
-    featured: raw.featured,
+    featured: !!raw.featured,
     publishedAt: raw.published_at,
     indexedAt: raw.indexed_at,
     viewerHasLiked: false,
@@ -476,10 +488,59 @@ function transformAuthor(raw: any): any {
     displayName: raw.display_name,
     avatarUrl: raw.avatar_url,
     bio: raw.bio,
-    verified: raw.verified,
-    claimed: raw.claimed,
+    verified: !!raw.verified,
+    claimed: !!raw.claimed,
     followerCount: raw.follower_count || 0,
     articleCount: raw.article_count || 0,
+  };
+}
+
+// articleCount is omitted unless the caller already has it; the Category
+// field resolver fills it in.
+function transformCategory(raw: Tables<'categories'>, articleCount?: number) {
+  return {
+    id: raw.id,
+    slug: raw.slug,
+    label: raw.label,
+    icon: raw.icon,
+    ...(articleCount === undefined ? {} : { articleCount }),
+  };
+}
+
+function transformUser(raw: Tables<'profiles'>) {
+  return {
+    id: raw.id,
+    username: raw.username,
+    avatarUrl: raw.avatar_url,
+    xHandle: raw.x_handle,
+  };
+}
+
+type SubmissionWithCategory = Tables<'submissions'> & { category: Tables<'categories'> | null };
+
+function transformSubmission(raw: SubmissionWithCategory) {
+  return {
+    id: raw.id,
+    url: raw.url,
+    category: raw.category ? transformCategory(raw.category) : null,
+    notes: raw.notes,
+    // GraphQL enum values are the uppercase names; the column stores lowercase.
+    status: (raw.status ?? 'pending').toUpperCase(),
+    createdAt: raw.created_at,
+    reviewedAt: raw.reviewed_at,
+  };
+}
+
+// tier and rate_limit fall back to the column defaults ('developer', 300).
+function transformApiKey(raw: Tables<'api_keys'>, key: string | null = null) {
+  return {
+    id: raw.id,
+    label: raw.label,
+    tier: raw.tier ?? 'developer',
+    rateLimit: raw.rate_limit ?? 300,
+    lastUsed: raw.last_used,
+    createdAt: raw.created_at,
+    key,
   };
 }
 
@@ -498,7 +559,7 @@ function formatConnection(items: any[], limit: number) {
       startCursor: edges[0]?.cursor || null,
       endCursor: edges[edges.length - 1]?.cursor || null,
     },
-    totalCount: edges.length, // approximate; exact count is expensive
+    totalCount: edges.length, // page size, as documented on ArticleConnection
   };
 }
 
@@ -514,22 +575,31 @@ function formatFeedConnection(items: any[], limit: number) {
       excerpt: item.excerpt,
       xUrl: item.x_url,
       coverImageUrl: item.cover_image_url,
+      // get_feed returns only these author columns; the rest take the same
+      // defaults as search results.
       author: {
         id: item.author_id,
         handle: item.author_handle || item.author_display_name,
         displayName: item.author_display_name || item.author_name,
-        verified: item.author_verified,
+        avatarUrl: item.author_avatar_url ?? null,
+        verified: !!item.author_verified,
+        claimed: false,
+        followerCount: 0,
+        articleCount: 0,
       },
-      categories: item.category_slugs || [],
+      // get_feed does not return categories or rating_count.
+      categories: [],
       stats: {
-        likeCount: item.like_count,
-        bookmarkCount: item.bookmark_count,
+        likeCount: item.like_count || 0,
+        bookmarkCount: item.bookmark_count || 0,
         commentCount: item.comment_count || 0,
         shareCount: item.share_count || 0,
-        avgRating: item.avg_rating,
+        ratingCount: 0,
+        avgRating: item.avg_rating || 0,
       },
-      featured: item.featured,
+      featured: !!item.featured,
       publishedAt: item.published_at,
+      indexedAt: null,
       readTimeMin: item.read_time_min,
     },
     cursor: encodeCursor(item.published_at),
@@ -560,9 +630,13 @@ export function transformSearchRow(row: any): any {
     readTimeMin: row.read_time_min,
     featured: false,
     publishedAt: row.published_at,
+    indexedAt: null,
+    // search_articles has no author id column, so Author.id (and
+    // Author.articles, which needs it) cannot resolve for search results.
     author: {
       handle: row.author_handle,
       displayName: row.author_display_name || row.author_handle,
+      avatarUrl: null,
       verified: !!row.author_verified,
       claimed: false,
       followerCount: 0,
@@ -580,12 +654,21 @@ export function transformSearchRow(row: any): any {
   };
 }
 
-function formatSearchConnection(rows: any[], limit: number, offset: number) {
+// For offset-paged lists (search, trending). rows holds up to limit + 1
+// items; the extra one only signals hasNextPage. Cursors are positions in the
+// unfiltered list so hidden rows can't shift or stall pagination.
+function formatOffsetConnection<R extends { title?: string | null }>(
+  rows: R[],
+  limit: number,
+  offset: number,
+  toNode: (row: R) => any,
+) {
   const hasNextPage = rows.length > limit;
   const page = rows.slice(0, limit);
-  const edges = filterBlockedTitles(page).map((row, i) => ({
-    node: transformSearchRow(row),
-    cursor: encodeOffsetCursor(offset + i + 1),
+  const positioned = page.map((row, i) => ({ row, title: row.title, position: offset + i + 1 }));
+  const edges = filterBlockedTitles(positioned).map(({ row, position }) => ({
+    node: toNode(row),
+    cursor: encodeOffsetCursor(position),
   }));
   return {
     edges,

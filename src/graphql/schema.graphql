@@ -1,7 +1,7 @@
-"""
-Linkdrift GraphQL API Schema v1.0
-The discovery layer for X Articles.
-"""
+# Linkdrift GraphQL API Schema v1.0
+# The discovery layer for X Articles.
+# Private backend for the linkdrift site, not a public API: every operation here
+# has a resolver and is pinned by src/graphql/contract.test.ts.
 
 scalar DateTime
 scalar UUID
@@ -22,7 +22,8 @@ type Article {
   readTimeMin: Int
   featured: Boolean!
   publishedAt: DateTime
-  indexedAt: DateTime!
+  """When linkdrift indexed the article (null in feed and search results)"""
+  indexedAt: DateTime
 
   """Whether the current authenticated user has liked this article"""
   viewerHasLiked: Boolean!
@@ -67,6 +68,7 @@ type ArticleStats {
 type ArticleConnection {
   edges: [ArticleEdge!]!
   pageInfo: PageInfo!
+  """Number of edges in this page, not a total across pages"""
   totalCount: Int!
 }
 
@@ -91,16 +93,6 @@ type User {
   username: String
   avatarUrl: String
   xHandle: String
-  bookmarks(first: Int = 20, after: String): ArticleConnection!
-  likes(first: Int = 20, after: String): ArticleConnection!
-  ratings: [UserRating!]!
-  apiKeys: [ApiKey!]!
-}
-
-type UserRating {
-  article: Article!
-  score: Int!
-  createdAt: DateTime!
 }
 
 type ApiKey {
@@ -120,7 +112,6 @@ type Submission {
   category: Category
   notes: String
   status: SubmissionStatus!
-  article: Article
   createdAt: DateTime!
   reviewedAt: DateTime
 }
@@ -164,13 +155,6 @@ type Query {
 
   """Get the current user's submissions"""
   mySubmissions(status: SubmissionStatus): [Submission!]!
-
-  """Search articles by text query"""
-  search(
-    query: String!
-    first: Int = 20
-    after: String
-  ): ArticleConnection!
 }
 
 enum FeedSort {
@@ -210,9 +194,6 @@ type Mutation {
 
   """Submit an X Article URL for indexing (requires auth)"""
   submitArticle(input: SubmitArticleInput!): Submission!
-
-  """Claim an author profile via X OAuth token (requires auth)"""
-  claimAuthor(xAccessToken: String!): Author!
 
   """Update the current user's profile (requires auth)"""
   updateProfile(input: UpdateProfileInput!): User!

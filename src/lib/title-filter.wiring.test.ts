@@ -8,6 +8,7 @@ vi.mock('@/lib/supabase-admin', () => {
   const builder: any = {};
   for (const m of ['select', 'eq', 'gte', 'order']) builder[m] = vi.fn(() => builder);
   builder.limit = vi.fn(() => Promise.resolve({ data: state.tableRows, error: null }));
+  builder.range = vi.fn(() => Promise.resolve({ data: state.tableRows, error: null }));
   return {
     supabaseAdmin: {
       rpc: vi.fn(() => Promise.resolve({ data: state.rpcRows, error: null })),
