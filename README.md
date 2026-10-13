@@ -75,7 +75,7 @@ See `Byline-Architecture-Spec-v1.docx` for the complete technical specification.
 byline/
 ├── supabase/
 │   └── migrations/
-│       └── 001_initial_schema.sql    # PostgreSQL schema (the asset)
+│       └── <version>_<name>.sql      # migrations, named by the version prod recorded
 ├── src/
 │   ├── app/
 │   │   └── api/
@@ -103,7 +103,7 @@ byline/
 
 | File | What It Is |
 |------|-----------|
-| `001_initial_schema.sql` | 10 tables, 16 indexes, 8 triggers, RLS policies, feed scoring function. This is the core asset. |
+| `supabase/migrations/` | Full migration history, one file per version in production's `schema_migrations`. Replays to the live schema. |
 | `schema.graphql` | Public API contract. Relay-style pagination, rate limit tiers, viewer-aware fields. |
 | `resolvers.ts` | All query/mutation logic. Auth-gated mutations, cursor pagination, search. |
 | `route.ts` (ingest) | Cron worker pulling from Netrows, auto-categorizing, deduplicating. |

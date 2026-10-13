@@ -1,0 +1,23 @@
+
+CREATE INDEX idx_articles_published_at ON articles(published_at DESC) WHERE status = 'published';
+CREATE INDEX idx_articles_status ON articles(status);
+CREATE INDEX idx_articles_author ON articles(author_id);
+CREATE INDEX idx_articles_featured ON articles(featured) WHERE featured = true AND status = 'published';
+CREATE INDEX idx_articles_source ON articles(source);
+CREATE INDEX idx_articles_fts ON articles USING gin(to_tsvector('english', coalesce(title, '') || ' ' || coalesce(excerpt, '')));
+CREATE INDEX idx_articles_title_trgm ON articles USING gin(title gin_trgm_ops);
+CREATE INDEX idx_article_categories_category ON article_categories(category_id);
+CREATE INDEX idx_article_categories_article ON article_categories(article_id);
+CREATE INDEX idx_bookmarks_user ON bookmarks(user_id);
+CREATE INDEX idx_bookmarks_article ON bookmarks(article_id);
+CREATE INDEX idx_likes_user ON likes(user_id);
+CREATE INDEX idx_likes_article ON likes(article_id);
+CREATE INDEX idx_ratings_article ON ratings(article_id);
+CREATE INDEX idx_article_stats_likes ON article_stats(like_count DESC);
+CREATE INDEX idx_article_stats_bookmarks ON article_stats(bookmark_count DESC);
+CREATE INDEX idx_article_stats_rating ON article_stats(avg_rating DESC) WHERE rating_count >= 3;
+CREATE INDEX idx_authors_handle ON authors(handle);
+CREATE INDEX idx_authors_claimed ON authors(claimed) WHERE claimed = true;
+CREATE INDEX idx_submissions_status ON submissions(status) WHERE status = 'pending';
+CREATE INDEX idx_submissions_user ON submissions(submitted_by);
+CREATE INDEX idx_api_keys_user ON api_keys(user_id) WHERE revoked = false;
