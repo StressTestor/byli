@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import type { CookieToSet } from '@/lib/supabase-cookies';
 
 /**
  * Middleware runs on every request.
@@ -24,7 +25,7 @@ export async function middleware(req: NextRequest) {
     {
       cookies: {
         getAll() { return req.cookies.getAll(); },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           cookiesToSet.forEach(({ name, value }) => {
             req.cookies.set(name, value);
           });

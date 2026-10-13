@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { runHealthCheck } from '@/lib/health-check';
 import { useAdminProfile } from '@/hooks/useAdminProfile';
 import type { Profile, Submission, Article, SiteSetting, HealthCheck, UserRole } from '@/types/database';
 
@@ -36,20 +37,7 @@ function SystemHealth() {
 
   const runCheck = useCallback(async () => {
     setLoading(true);
-    try {
-      const { data } = await supabase.rpc('run_db_health_check' as any);
-      if (data) {
-        setChecks(Array.isArray(data) ? data : [data]);
-      }
-    } catch {
-      // Fallback: fetch latest from health_checks table
-      const { data } = await supabase
-        .from('health_checks' as any)
-        .select('*')
-        .order('checked_at', { ascending: false })
-        .limit(10);
-      if (data) setChecks(data as any);
-    }
+    setChecks(await runHealthCheck(supabase, 10));
     setLoading(false);
   }, []);
 
@@ -143,7 +131,7 @@ function SubmissionQueue() {
 
   const handleReject = async (submission: Submission) => {
     const { data: { user } } = await supabase.auth.getUser();
-    await (supabase.from('submissions') as any)
+    await supabase.from('submissions')
       .update({
         status: 'rejected',
         reviewed_by: user?.id || null,
@@ -181,7 +169,7 @@ function SubmissionQueue() {
                   {sub.category_label && (
                     <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">{sub.category_label}</span>
                   )}
-                  <span>{new Date(sub.created_at).toLocaleDateString()}</span>
+                  <span>{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</span>
                   {sub.notes && <span className="truncate max-w-[200px]">— {sub.notes}</span>}
                 </div>
               </div>
@@ -228,13 +216,13 @@ function ArticleManagement() {
   useEffect(() => { fetchArticles(); }, [fetchArticles]);
 
   const toggleFeatured = async (article: Article) => {
-    await (supabase.from('articles') as any).update({ featured: !article.featured }).eq('id', article.id);
+    await supabase.from('articles').update({ featured: !article.featured }).eq('id', article.id);
     await logAdminAction(article.featured ? 'unfeature_article' : 'feature_article', 'article', article.id, { title: article.title });
     fetchArticles();
   };
 
   const changeStatus = async (article: Article, status: 'published' | 'archived') => {
-    const { error } = await (supabase.from('articles') as any).update({ status }).eq('id', article.id);
+    const { error } = await supabase.from('articles').update({ status }).eq('id', article.id);
     if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction('change_article_status', 'article', article.id, { from: article.status, to: status });
     fetchArticles();
@@ -333,7 +321,7 @@ function SiteSettings() {
   const fetchSettings = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
-      .from('site_settings' as any)
+      .from('site_settings')
       .select('*');
     if (data) {
       const map: Record<string, boolean> = {};
@@ -350,7 +338,7 @@ function SiteSettings() {
   const toggleSetting = async (key: string) => {
     const newValue = !settings[key];
     await supabase
-      .from('site_settings' as any)
+      .from('site_settings')
       .upsert({ key, value: String(newValue), updated_at: new Date().toISOString() } as any);
     setSettings(prev => ({ ...prev, [key]: newValue }));
     await logAdminAction('toggle_setting', 'site_setting', key, { value: newValue });
@@ -410,7 +398,7 @@ function UserManagement() {
   useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
 
   const changeRole = async (profile: Profile, newRole: UserRole) => {
-    await (supabase.from('profiles') as any).update({ role: newRole }).eq('id', profile.id);
+    await supabase.from('profiles').update({ role: newRole }).eq('id', profile.id);
     await logAdminAction('change_user_role', 'profile', profile.id, {
       username: profile.username,
       from: profile.role,
@@ -445,7 +433,7 @@ function UserManagement() {
                   <div className="text-xs text-zinc-500">
                     {profile.x_handle ? `@${profile.x_handle}` : profile.id.slice(0, 12)}
                     <span className="mx-1">·</span>
-                    Joined {new Date(profile.created_at).toLocaleDateString()}
+                    Joined {profile.created_at ? new Date(profile.created_at).toLocaleDateString() : '-'}
                   </div>
                 </div>
               </div>
@@ -477,9 +465,9 @@ function HealthCheckHistory() {
     (async () => {
       setLoading(true);
       const { data } = await supabase
-        .from('health_checks' as any)
+        .from('health_checks')
         .select('*')
-        .order('checked_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(10);
       if (data) setHistory(data as any);
       setLoading(false);
@@ -519,7 +507,7 @@ function HealthCheckHistory() {
                   <td className={`px-4 py-3 font-medium capitalize ${statusColor(check.status)}`}>{check.status}</td>
                   <td className="px-4 py-3 text-zinc-500 hidden sm:table-cell truncate max-w-[200px]">{check.message || '-'}</td>
                   <td className="px-4 py-3 text-zinc-500 text-xs">
-                    {new Date(check.checked_at).toLocaleString()}
+                    {check.created_at ? new Date(check.created_at).toLocaleString() : '-'}
                   </td>
                 </tr>
               ))}

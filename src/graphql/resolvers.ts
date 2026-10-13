@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin';
 import { createSupabaseServer } from '@/lib/supabase-server';
 import { filterBlockedTitles } from '@/lib/title-filter';
 import type { FeedSort, Timeframe, ArticleWithRelations } from '@/types/database';
+import type { Enums } from '@/types/supabase';
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -78,10 +79,10 @@ export const resolvers = {
 
       // Use feed function for standard queries
       const { data, error } = await supabaseAdmin.rpc('get_feed', {
-        p_category_slug: args.category || null,
+        p_category_slug: args.category || undefined,
         p_sort: sortKey,
         p_limit: limit + 1, // fetch one extra to determine hasNextPage
-        p_cursor: cursor,
+        p_cursor: cursor ?? undefined,
       });
 
       if (error) throw new Error(error.message);
@@ -194,7 +195,9 @@ export const resolvers = {
         .eq('submitted_by', user.id)
         .order('created_at', { ascending: false });
 
-      if (args.status) query = query.eq('status', args.status.toLowerCase());
+      if (args.status) {
+        query = query.eq('status', args.status.toLowerCase() as Enums<'submission_status'>);
+      }
 
       const { data, error } = await query;
       if (error) throw new Error(error.message);

@@ -342,10 +342,10 @@ export default async function ArticlePage({
               >
                 @{article.author.handle}
               </Link>
-              {article.author.follower_count > 0 && (
+              {(article.author.follower_count ?? 0) > 0 && (
                 <>
                   <span className="text-zinc-700">·</span>
-                  <span>{formatNumber(article.author.follower_count)} followers</span>
+                  <span>{formatNumber(article.author.follower_count ?? 0)} followers</span>
                 </>
               )}
             </div>
@@ -418,7 +418,7 @@ export default async function ArticlePage({
                 />
               </svg>
             }
-            count={stats.like_count}
+            count={stats.like_count ?? 0}
             label="Likes"
           />
           <StatItem
@@ -438,7 +438,7 @@ export default async function ArticlePage({
                 />
               </svg>
             }
-            count={stats.bookmark_count}
+            count={stats.bookmark_count ?? 0}
             label="Bookmarks"
           />
           <StatItem
@@ -458,7 +458,7 @@ export default async function ArticlePage({
                 />
               </svg>
             }
-            count={stats.comment_count}
+            count={stats.comment_count ?? 0}
             label="Comments"
           />
           <StatItem
@@ -478,7 +478,7 @@ export default async function ArticlePage({
                 />
               </svg>
             }
-            count={stats.share_count}
+            count={stats.share_count ?? 0}
             label="Shares"
           />
         </div>
