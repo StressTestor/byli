@@ -156,7 +156,7 @@ Functions: `get_feed`, `search_articles`, `feed_score` (feed ranking), `is_admin
 - applying: changes have gone through the Supabase MCP `apply_migration` (or `supabase db push`). After applying, name the repo file with the version production recorded, so history stays 1:1.
 - types: regenerate `src/types/supabase.ts` after any schema change.
 - ordering: apply additive migrations (new tables) before merging the code that uses them. Merge code before applying migrations that remove things it depends on.
-- replay: verified 2026-10-13. `supabase start` on an empty local stack applies all 28 migrations, and the resulting catalog (tables, functions with security mode and search_path, policies, triggers, indexes, `profiles` column grants, function EXECUTE grants, extension schemas) md5-matches production. The CLI in `devDependencies` (1.226) only supports Postgres 15 locally; production runs 17.
+- replay: verified 2026-10-13. `supabase start` on an empty local stack applies all 28 migrations, and the resulting catalog (tables, functions with security mode and search_path, policies, triggers, indexes, `profiles` column grants, function EXECUTE grants, extension schemas) md5-matches production. Checked on Postgres 15 (the pinned CLI 1.226) and on Postgres 17.11 (CLI 2.120.0, matching production's major version). Both match.
 
 ## environment variables
 
