@@ -54,10 +54,34 @@ export async function POST(
     );
   }
 
+  // Claim the submission before ingesting anything, so a concurrent approve
+  // or reject can't interleave with a published article.
+  const { data: claimed, error: claimErr } = await supabaseAdmin
+    .from('submissions')
+    .update({ status: 'approved', reviewed_by: user.id, reviewed_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('id');
+  if (claimErr) {
+    console.error('[approve] claim failed:', claimErr);
+    return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
+  }
+  if (!claimed || claimed.length === 0) {
+    return NextResponse.json({ error: 'Submission was reviewed by someone else' }, { status: 409 });
+  }
+
   const outcome = await ingestSingleArticle(tweetId);
   // "already exists" still carries the existing article's id; link it.
   const articleId = outcome.articleId;
   if (!articleId) {
+    // Release the claim so the submission goes back to the queue.
+    const { error: releaseErr } = await supabaseAdmin
+      .from('submissions')
+      .update({ status: 'pending', reviewed_by: null, reviewed_at: null })
+      .eq('id', id)
+      .eq('status', 'approved')
+      .is('article_id', null);
+    if (releaseErr) console.error('[approve] releasing claim failed:', releaseErr);
     const status = outcome.blocked ? 422 : 502;
     return NextResponse.json({ error: outcome.error || 'Ingest failed' }, { status });
   }
@@ -72,17 +96,12 @@ export async function POST(
     if (catErr) console.error('[approve] category link failed:', catErr);
   }
 
-  const { error: updErr } = await supabaseAdmin
+  const { error: linkErr } = await supabaseAdmin
     .from('submissions')
-    .update({
-      status: 'approved',
-      article_id: articleId,
-      reviewed_by: user.id,
-      reviewed_at: new Date().toISOString(),
-    })
+    .update({ article_id: articleId })
     .eq('id', id);
-  if (updErr) {
-    console.error('[approve] submission update failed:', updErr);
+  if (linkErr) {
+    console.error('[approve] linking article failed:', linkErr);
     return NextResponse.json({ error: 'Article ingested but submission update failed' }, { status: 500 });
   }
 

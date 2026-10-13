@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
 import { runHealthCheck } from '@/lib/health-check';
 import { useAdminProfile } from '@/hooks/useAdminProfile';
-import type { Submission, Article, HealthCheck, Profile, UserRole } from '@/types/database';
+import type { Submission, Article, HealthCheck, Profile } from '@/types/database';
 
 // ─── Admin Log Helper ────────────────────────────────────────
 
@@ -106,7 +106,7 @@ function SidebarSubmissions() {
       status: 'rejected',
       reviewed_by: user?.id || null,
       reviewed_at: new Date().toISOString(),
-    }).eq('id', sub.id);
+    }).eq('id', sub.id).eq('status', 'pending');
     await logAdminAction('reject_submission', 'submission', sub.id, { url: sub.url });
     fetch();
   };
@@ -278,14 +278,6 @@ function SidebarUsers() {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const changeRole = async (p: Profile, newRole: UserRole) => {
-    await supabase.from('profiles').update({ role: newRole }).eq('id', p.id);
-    await logAdminAction('change_user_role', 'profile', p.id, { username: p.username, from: p.role, to: newRole });
-    fetch();
-  };
-
-  const roles: UserRole[] = ['user', 'moderator', 'admin'];
-
   if (loading) return <Skeleton count={3} />;
   if (profiles.length === 0) return <Empty text="No users" />;
 
@@ -299,13 +291,7 @@ function SidebarUsers() {
           <div className="flex-1 min-w-0">
             <div className="text-xs text-zinc-200 truncate">{p.username || p.x_handle || p.id.slice(0, 8)}</div>
           </div>
-          <select
-            value={p.role || 'user'}
-            onChange={e => changeRole(p, e.target.value as UserRole)}
-            className="px-1.5 py-1 text-[10px] bg-zinc-800 border border-zinc-700 rounded text-zinc-300 focus:outline-none"
-          >
-            {roles.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <span className="px-1.5 py-1 text-[10px] text-zinc-400">{p.role}</span>
         </div>
       ))}
     </div>
