@@ -6,6 +6,13 @@
  *    The timeline response has an `article` field on each tweet — non-null = article.
  * 2. Global search: search for "x.com/i/article" to find articles from any account.
  *
+ * Failure policy:
+ * - twitterapi.io 401/402/403/429 (bad key, out of credits, forbidden, rate
+ *   limited) aborts the whole run: every later request would fail the same way.
+ * - 5xx and network errors are counted per account and the run continues.
+ * - 404 and `data.unavailable` mean the account or tweet is gone.
+ * - Supabase errors are logged; a failed seed or category load fails the run.
+ *
  * Cron config in vercel.json:
  * { "crons": [{ "path": "/api/ingest", "schedule": "0 0 * * *" }] }
  */
@@ -13,6 +20,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from '@/lib/ingest-utils';
 import { isBlockedTitle } from '@/lib/title-filter';
+import { runWithConcurrency } from '@/lib/concurrency';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -20,7 +28,7 @@ const TWITTERAPI_KEY = process.env.TWITTERAPI_IO_KEY!;
 const TWITTERAPI_BASE = 'https://api.twitterapi.io/twitter';
 
 // Fallback seed list — DB seed_accounts table is the primary source.
-// These are checked if the DB query fails or returns empty.
+// Used only when the table has no approved rows; a query error fails the run.
 const FALLBACK_SEED_ACCOUNTS = [
   'Decentralisedco', 'NotBatmanDev', 'DefiIgnas', 'CryptoCred',
   'Rewkang', 'tokenterminal', 'sierracatalina', 'RyanHoliday', 'drjimfan',
@@ -29,6 +37,15 @@ const FALLBACK_SEED_ACCOUNTS = [
 const MAX_PAGES_DEFAULT = 1;
 const MAX_PAGES_HIGH_YIELD = 3;
 const GLOBAL_SEARCH_PAGES = 3; // ~60 articles from global search
+
+// The route runs with maxDuration = 60 (Vercel Hobby max). The timeline phase
+// stops dispatching new accounts after TIMELINE_BUDGET_MS so global search
+// still gets a turn, and global search stops ingesting at RUN_BUDGET_MS so the
+// run record can be closed before the function is killed.
+const TIMELINE_CONCURRENCY = 3;
+const POLITENESS_DELAY_MS = 300;
+const TIMELINE_BUDGET_MS = 35_000;
+const RUN_BUDGET_MS = 50_000;
 
 // ─── TwitterAPI.io Types ─────────────────────────────────────────────
 
@@ -115,7 +132,72 @@ function meetsQualityThreshold(tweet: TimelineTweet): boolean {
   return likes >= MIN_LIKES && followers >= MIN_FOLLOWERS && totalEngagement >= MIN_ENGAGEMENT;
 }
 
+// ─── Errors ──────────────────────────────────────────────────────────
+
+// Statuses where retrying the next account cannot help: bad or missing key,
+// out of credits, forbidden, rate limited.
+const FATAL_UPSTREAM_STATUSES = new Set([401, 402, 403, 429]);
+
+/**
+ * A failed twitterapi.io request. `status` is the HTTP status, or 0 when the
+ * request never got a response. `fatal` errors abort the ingest run.
+ * The message names the endpoint path only; the API key is never included.
+ */
+export class TwitterApiError extends Error {
+  readonly status: number;
+  readonly endpoint: string;
+  readonly fatal: boolean;
+
+  constructor(endpoint: string, status: number, detail?: string) {
+    const what = status === 0 ? 'request failed' : `responded ${status}`;
+    super(`twitterapi.io ${endpoint} ${what}${detail ? `: ${detail}` : ''}`);
+    this.name = 'TwitterApiError';
+    this.status = status;
+    this.endpoint = endpoint;
+    this.fatal = FATAL_UPSTREAM_STATUSES.has(status);
+  }
+}
+
+function isFatal(err: unknown): err is TwitterApiError {
+  return err instanceof TwitterApiError && err.fatal;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function dbErrorMessage(error: { message: string; code?: string }): string {
+  return error.code ? `${error.message} (${error.code})` : error.message;
+}
+
+// Upstream bodies and network errors are echoed into logs and the run record.
+function redactKey(text: string): string {
+  return TWITTERAPI_KEY ? text.split(TWITTERAPI_KEY).join('[redacted]') : text;
+}
+
 // ─── API Helpers ─────────────────────────────────────────────────────
+
+/**
+ * GET a twitterapi.io endpoint. Returns null on 404 and throws
+ * TwitterApiError on any other non-2xx or network failure.
+ */
+async function twitterGet<T>(endpoint: string, params: URLSearchParams): Promise<T | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${TWITTERAPI_BASE}${endpoint}?${params}`, {
+      headers: { 'X-API-Key': TWITTERAPI_KEY },
+    });
+  } catch (err) {
+    throw new TwitterApiError(endpoint, 0, redactKey(errorMessage(err)));
+  }
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new TwitterApiError(endpoint, res.status, redactKey(body.slice(0, 200)));
+  }
+  return (await res.json()) as T;
+}
 
 interface TimelinePage {
   tweets: TimelineTweet[];
@@ -126,14 +208,8 @@ async function fetchTimelinePage(userName: string, cursor?: string): Promise<Tim
   const params = new URLSearchParams({ userName });
   if (cursor) params.set('cursor', cursor);
 
-  const res = await fetch(`${TWITTERAPI_BASE}/user/last_tweets?${params}`, {
-    headers: { 'X-API-Key': TWITTERAPI_KEY },
-  });
-
-  if (!res.ok) return { tweets: [] };
-
-  const json: UserTimelineResponse = await res.json();
-  if (json.data?.unavailable) return { tweets: [] };
+  const json = await twitterGet<UserTimelineResponse>('/user/last_tweets', params);
+  if (!json || json.data?.unavailable) return { tweets: [] };
 
   const tweets = json.data?.tweets || json.tweets || [];
   return {
@@ -142,7 +218,7 @@ async function fetchTimelinePage(userName: string, cursor?: string): Promise<Tim
   };
 }
 
-async function fetchUserTimeline(userName: string, maxPages = 1): Promise<TimelineTweet[]> {
+async function fetchUserTimeline(userName: string, maxPages: number, delayMs: number): Promise<TimelineTweet[]> {
   const allTweets: TimelineTweet[] = [];
   let cursor: string | undefined;
 
@@ -151,22 +227,17 @@ async function fetchUserTimeline(userName: string, maxPages = 1): Promise<Timeli
     allTweets.push(...result.tweets);
     if (!result.nextCursor) break;
     cursor = result.nextCursor;
-    if (page < maxPages - 1) await sleep(300);
+    if (page < maxPages - 1) await sleep(delayMs);
   }
 
   return allTweets;
 }
 
+/** Returns null when the tweet is missing or is not an article. Throws TwitterApiError otherwise. */
 async function probeArticle(tweetId: string): Promise<ArticleData | null> {
   const params = new URLSearchParams({ tweet_id: tweetId });
-  const res = await fetch(`${TWITTERAPI_BASE}/article?${params}`, {
-    headers: { 'X-API-Key': TWITTERAPI_KEY },
-  });
-
-  if (!res.ok) return null;
-
-  const json = await res.json();
-  if (json.status !== 'success' || !json.article) return null;
+  const json = await twitterGet<{ status?: string; article?: ArticleData }>('/article', params);
+  if (!json || json.status !== 'success' || !json.article) return null;
   return json.article;
 }
 
@@ -186,7 +257,14 @@ interface SearchResponse {
   next_cursor?: string;
 }
 
-async function searchGlobalArticles(maxPages = 1): Promise<TimelineTweet[]> {
+/**
+ * Fatal upstream errors are thrown. A non-fatal error ends the search early
+ * and is returned alongside the pages already fetched, so they still get ingested.
+ */
+async function searchGlobalArticles(
+  maxPages: number,
+  delayMs: number,
+): Promise<{ tweets: TimelineTweet[]; error?: unknown }> {
   const allTweets: TimelineTweet[] = [];
   let cursor: string | undefined;
 
@@ -197,24 +275,25 @@ async function searchGlobalArticles(maxPages = 1): Promise<TimelineTweet[]> {
     });
     if (cursor) params.set('cursor', cursor);
 
-    const res = await fetch(
-      `${TWITTERAPI_BASE}/tweet/advanced_search?${params}`,
-      { headers: { 'X-API-Key': TWITTERAPI_KEY } }
-    );
+    let json: SearchResponse | null;
+    try {
+      json = await twitterGet<SearchResponse>('/tweet/advanced_search', params);
+    } catch (err) {
+      if (isFatal(err)) throw err;
+      return { tweets: allTweets, error: err };
+    }
+    if (!json) break;
 
-    if (!res.ok) break;
-
-    const json: SearchResponse = await res.json();
     const tweets = json.data?.tweets || json.tweets || [];
     const articleTweets = (Array.isArray(tweets) ? tweets : []).filter(t => t.article);
     allTweets.push(...articleTweets);
 
     if (!json.has_next_page || !json.next_cursor) break;
     cursor = json.next_cursor;
-    if (page < maxPages - 1) await sleep(300);
+    if (page < maxPages - 1) await sleep(delayMs);
   }
 
-  return allTweets;
+  return { tweets: allTweets };
 }
 
 // ─── Seed Account Loader ────────────────────────────────────────────
@@ -225,16 +304,24 @@ interface SeedAccount {
 }
 
 async function loadSeedAccounts(): Promise<SeedAccount[]> {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('seed_accounts')
     .select('handle, high_yield')
     .eq('status', 'approved');
+
+  if (error) {
+    const message = `seed_accounts query failed: ${dbErrorMessage(error)}`;
+    console.error(`[ingest] ${message}`);
+    throw new Error(message);
+  }
 
   if (data && data.length > 0) {
     return data.map(row => ({ handle: row.handle, highYield: row.high_yield }));
   }
 
-  // Fallback to hardcoded list if DB is empty/unreachable
+  console.warn(
+    `[ingest] seed_accounts has no approved rows; using ${FALLBACK_SEED_ACCOUNTS.length} fallback handles`,
+  );
   return FALLBACK_SEED_ACCOUNTS.map(handle => ({ handle, highYield: false }));
 }
 
@@ -276,8 +363,13 @@ export interface IngestOutcome {
   title?: string;
   error?: string;
   blocked?: boolean;
+  duplicate?: boolean;
   articleId?: string;
 }
+
+// PostgreSQL unique_violation. articles.x_url and articles.x_article_id are
+// both UNIQUE, so this means another worker inserted the same tweet first.
+const UNIQUE_VIOLATION = '23505';
 
 async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome> {
   const { tweetId, tweetUrl, article, author: authorSource, publishedAt, fallbackText, stats, catMap } = input;
@@ -295,7 +387,7 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
   const readTime = estimateReadTime(cleanText);
 
   // Upsert author
-  const { data: author } = await supabaseAdmin
+  const { data: author, error: authorErr } = await supabaseAdmin
     .from('authors')
     .upsert({
       x_user_id: authorSource.id,
@@ -308,13 +400,17 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
     .select('id')
     .single();
 
-  if (!author) return { ok: false, error: 'failed to upsert author' };
+  if (authorErr || !author) {
+    const detail = authorErr ? dbErrorMessage(authorErr) : 'no row returned';
+    console.error(`[ingest] author upsert failed for @${authorSource.userName} (tweet ${tweetId}): ${detail}`);
+    return { ok: false, error: 'failed to upsert author' };
+  }
 
   // Classify
   const categorySlugs = classifyArticle(article.title, excerpt);
 
   // Insert article
-  const { data: newArticle } = await supabaseAdmin
+  const { data: newArticle, error: articleErr } = await supabaseAdmin
     .from('articles')
     .insert({
       x_article_id: tweetId,
@@ -332,22 +428,33 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
     .select('id')
     .single();
 
-  if (!newArticle) return { ok: false, error: 'failed to insert article' };
+  if (articleErr?.code === UNIQUE_VIOLATION) {
+    return { ok: false, duplicate: true, error: 'already exists' };
+  }
+  if (articleErr || !newArticle) {
+    const detail = articleErr ? dbErrorMessage(articleErr) : 'no row returned';
+    console.error(`[ingest] article insert failed for tweet ${tweetId}: ${detail}`);
+    return { ok: false, error: 'failed to insert article' };
+  }
 
-  // Link categories
+  // Link categories. The article already exists, so a failure here is logged
+  // and the ingest still counts as new.
   const categoryLinks = categorySlugs
     .map(slug => catMap.get(slug))
     .filter(Boolean)
     .map(catId => ({ article_id: newArticle.id, category_id: catId! }));
 
   if (categoryLinks.length > 0) {
-    await supabaseAdmin
+    const { error: linkErr } = await supabaseAdmin
       .from('article_categories')
       .insert(categoryLinks);
+    if (linkErr) {
+      console.error(`[ingest] category link failed for article ${newArticle.id}: ${dbErrorMessage(linkErr)}`);
+    }
   }
 
   // Upsert engagement stats (upsert avoids race condition with DB triggers)
-  await supabaseAdmin
+  const { error: statsErr } = await supabaseAdmin
     .from('article_stats')
     .upsert({
       article_id: newArticle.id,
@@ -356,6 +463,9 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
       comment_count: stats.replyCount,
       share_count: stats.retweetCount,
     }, { onConflict: 'article_id' });
+  if (statsErr) {
+    console.error(`[ingest] stats upsert failed for article ${newArticle.id}: ${dbErrorMessage(statsErr)}`);
+  }
 
   return { ok: true, title: article.title, articleId: newArticle.id };
 }
@@ -363,15 +473,46 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
 // ─── Category Map Loader ────────────────────────────────────────────
 
 async function loadCategoryMap(): Promise<Map<string, string>> {
-  const { data: categories } = await supabaseAdmin
+  const { data: categories, error } = await supabaseAdmin
     .from('categories')
-    .select('id, slug') as unknown as { data: { id: string; slug: string }[] | null };
+    .select('id, slug');
+  if (error) {
+    const message = `categories query failed: ${dbErrorMessage(error)}`;
+    console.error(`[ingest] ${message}`);
+    throw new Error(message);
+  }
   return new Map((categories || []).map(c => [c.slug, c.id]));
+}
+
+// ─── Dedup ──────────────────────────────────────────────────────────
+
+/**
+ * Returns the id of an article matching either the tweet URL or the tweet id.
+ * Two parameterized lookups: values are never spliced into PostgREST filter
+ * syntax, so a URL containing ',' or ')' cannot change the query.
+ */
+async function findExistingArticle(tweetUrl: string, tweetId: string): Promise<string | null> {
+  const byUrl = await supabaseAdmin
+    .from('articles')
+    .select('id')
+    .eq('x_url', tweetUrl)
+    .maybeSingle();
+  if (byUrl.error) throw new Error(`articles lookup by x_url failed: ${dbErrorMessage(byUrl.error)}`);
+  if (byUrl.data) return byUrl.data.id;
+
+  const byId = await supabaseAdmin
+    .from('articles')
+    .select('id')
+    .eq('x_article_id', tweetId)
+    .maybeSingle();
+  if (byId.error) throw new Error(`articles lookup by x_article_id failed: ${dbErrorMessage(byId.error)}`);
+  return byId.data?.id ?? null;
 }
 
 // ─── Ingestion Logic ─────────────────────────────────────────────────
 
-export interface IngestResult {
+// A type alias (not an interface) so it is assignable to the Json column type.
+export type IngestResult = {
   accounts_checked: number;
   tweets_scanned: number;
   articles_found: number;
@@ -380,10 +521,39 @@ export interface IngestResult {
   skipped_low_quality: number;
   skipped_unavailable: number;
   skipped_blocked: number;
+  /** Seed accounts not scanned because the timeline time budget ran out. */
+  skipped_over_budget: number;
   errors: number;
   global_search_articles: number;
   cost_estimate_usd: number;
   duration_ms: number;
+};
+
+export interface IngestOptions {
+  /** Pause between requests to twitterapi.io, per worker. */
+  delayMs?: number;
+  /** Stop dispatching new seed accounts after this many ms. */
+  timelineBudgetMs?: number;
+  /** Stop ingesting global search results after this many ms. */
+  runBudgetMs?: number;
+}
+
+function emptyResult(): IngestResult {
+  return {
+    accounts_checked: 0,
+    tweets_scanned: 0,
+    articles_found: 0,
+    new_articles: 0,
+    skipped_duplicates: 0,
+    skipped_low_quality: 0,
+    skipped_unavailable: 0,
+    skipped_blocked: 0,
+    skipped_over_budget: 0,
+    errors: 0,
+    global_search_articles: 0,
+    cost_estimate_usd: 0,
+    duration_ms: 0,
+  };
 }
 
 async function ingestArticleTweet(
@@ -394,13 +564,12 @@ async function ingestArticleTweet(
   if (!tweet.article) return 'error';
 
   const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
-  const { data: existing } = await supabaseAdmin
-    .from('articles')
-    .select('id')
-    .or(`x_url.eq.${tweetUrl},x_article_id.eq.${tweet.id}`)
-    .maybeSingle();
-
-  if (existing) return 'duplicate';
+  try {
+    if (await findExistingArticle(tweetUrl, tweet.id)) return 'duplicate';
+  } catch (err) {
+    console.error(`[ingest] dedup check failed for tweet ${tweet.id}: ${errorMessage(err)}`);
+    return 'error';
+  }
 
   const result = await processArticle({
     tweetId: tweet.id,
@@ -419,137 +588,237 @@ async function ingestArticleTweet(
   });
 
   if (result.blocked) return 'blocked';
+  if (result.duplicate) return 'duplicate';
   return result.ok ? 'new' : 'error';
 }
 
-export async function ingestArticles(): Promise<IngestResult> {
+/**
+ * Scan seed timelines and global search. Counters are written into `stats` as
+ * the run progresses, so a caller that catches a thrown abort still has the
+ * partial totals. Throws TwitterApiError on a fatal upstream status, and Error
+ * when the seed or category tables cannot be read.
+ */
+export async function ingestArticles(
+  options: IngestOptions = {},
+  stats: IngestResult = emptyResult(),
+): Promise<IngestResult> {
+  const {
+    delayMs = POLITENESS_DELAY_MS,
+    timelineBudgetMs = TIMELINE_BUDGET_MS,
+    runBudgetMs = RUN_BUDGET_MS,
+  } = options;
   const start = Date.now();
-  let accountsChecked = 0;
-  let tweetsScanned = 0;
-  let articlesFound = 0;
-  let newArticles = 0;
-  let skippedDuplicates = 0;
-  let skippedLowQuality = 0;
-  let skippedUnavailable = 0;
-  let skippedBlocked = 0;
-  let errors = 0;
-  let globalSearchArticles = 0;
+  const elapsed = () => Date.now() - start;
 
-  const catMap = await loadCategoryMap();
-  const seedAccounts = await loadSeedAccounts();
-
-  // ── Phase 1: Timeline scan of seed accounts ──
-  for (const { handle, highYield } of seedAccounts) {
-    try {
-      const pages = highYield ? MAX_PAGES_HIGH_YIELD : MAX_PAGES_DEFAULT;
-      const tweets = await fetchUserTimeline(handle, pages);
-      accountsChecked++;
-
-      if (tweets.length === 0) {
-        skippedUnavailable++;
-        continue;
-      }
-
-      for (const tweet of tweets) {
-        tweetsScanned++;
-        if (!tweet.article) continue;
-        articlesFound++;
-
-        const outcome = await ingestArticleTweet(tweet, handle, catMap);
-        if (outcome === 'new') newArticles++;
-        else if (outcome === 'duplicate') skippedDuplicates++;
-        else if (outcome === 'blocked') skippedBlocked++;
-        else errors++;
-      }
-
-      await sleep(300);
-    } catch (err) {
-      console.error(`Error processing @${handle}:`, err);
-      errors++;
-    }
-  }
-
-  // ── Phase 2: Global article search ──
-  // Finds articles from anyone on X. Quality-filtered to skip spam/low-traction.
   try {
-    const globalTweets = await searchGlobalArticles(GLOBAL_SEARCH_PAGES);
-    for (const tweet of globalTweets) {
-      tweetsScanned++;
-      articlesFound++;
+    const catMap = await loadCategoryMap();
+    const seedAccounts = await loadSeedAccounts();
 
-      if (!meetsQualityThreshold(tweet)) {
-        skippedLowQuality++;
-        continue;
-      }
+    // ── Phase 1: Timeline scan of seed accounts ──
+    stats.skipped_over_budget = await runWithConcurrency(
+      seedAccounts,
+      TIMELINE_CONCURRENCY,
+      async ({ handle, highYield }) => {
+        try {
+          const pages = highYield ? MAX_PAGES_HIGH_YIELD : MAX_PAGES_DEFAULT;
+          const tweets = await fetchUserTimeline(handle, pages, delayMs);
+          stats.accounts_checked++;
 
-      const handle = tweet.author?.userName || 'unknown';
-      const outcome = await ingestArticleTweet(tweet, handle, catMap);
-      if (outcome === 'new') {
-        newArticles++;
-        globalSearchArticles++;
-      } else if (outcome === 'duplicate') {
-        skippedDuplicates++;
-      } else if (outcome === 'blocked') {
-        skippedBlocked++;
-      } else {
-        errors++;
-      }
+          if (tweets.length === 0) {
+            stats.skipped_unavailable++;
+          }
+
+          for (const tweet of tweets) {
+            stats.tweets_scanned++;
+            if (!tweet.article) continue;
+            stats.articles_found++;
+
+            const outcome = await ingestArticleTweet(tweet, handle, catMap);
+            if (outcome === 'new') stats.new_articles++;
+            else if (outcome === 'duplicate') stats.skipped_duplicates++;
+            else if (outcome === 'blocked') stats.skipped_blocked++;
+            else stats.errors++;
+          }
+        } catch (err) {
+          if (isFatal(err)) throw err;
+          console.error(`[ingest] @${handle}: ${errorMessage(err)}`);
+          stats.errors++;
+        }
+        await sleep(delayMs);
+      },
+      () => elapsed() < timelineBudgetMs,
+    );
+
+    if (stats.skipped_over_budget > 0) {
+      console.warn(
+        `[ingest] timeline budget of ${timelineBudgetMs}ms spent; ` +
+        `skipped ${stats.skipped_over_budget} of ${seedAccounts.length} seed accounts`,
+      );
     }
+
+    // ── Phase 2: Global article search ──
+    // Finds articles from anyone on X. Quality-filtered to skip spam/low-traction.
+    if (elapsed() >= runBudgetMs) {
+      console.warn(`[ingest] run budget of ${runBudgetMs}ms spent; skipping global search`);
+      return stats;
+    }
+
+    try {
+      const { tweets: globalTweets, error: searchErr } = await searchGlobalArticles(GLOBAL_SEARCH_PAGES, delayMs);
+      if (searchErr) {
+        console.error(`[ingest] global search: ${errorMessage(searchErr)}`);
+        stats.errors++;
+      }
+
+      for (let i = 0; i < globalTweets.length; i++) {
+        if (elapsed() >= runBudgetMs) {
+          console.warn(
+            `[ingest] run budget of ${runBudgetMs}ms spent; ` +
+            `left ${globalTweets.length - i} global search results unprocessed`,
+          );
+          break;
+        }
+
+        const tweet = globalTweets[i];
+        stats.tweets_scanned++;
+        stats.articles_found++;
+
+        if (!meetsQualityThreshold(tweet)) {
+          stats.skipped_low_quality++;
+          continue;
+        }
+
+        const handle = tweet.author?.userName || 'unknown';
+        const outcome = await ingestArticleTweet(tweet, handle, catMap);
+        if (outcome === 'new') {
+          stats.new_articles++;
+          stats.global_search_articles++;
+        } else if (outcome === 'duplicate') {
+          stats.skipped_duplicates++;
+        } else if (outcome === 'blocked') {
+          stats.skipped_blocked++;
+        } else {
+          stats.errors++;
+        }
+      }
+    } catch (err) {
+      if (isFatal(err)) throw err;
+      console.error(`[ingest] global search: ${errorMessage(err)}`);
+      stats.errors++;
+    }
+
+    return stats;
+  } finally {
+    const costEstimate = (stats.accounts_checked + GLOBAL_SEARCH_PAGES) * 0.003;
+    stats.cost_estimate_usd = Math.round(costEstimate * 10000) / 10000;
+    stats.duration_ms = elapsed();
+  }
+}
+
+// ─── Cron Run (persisted to ingest_runs) ────────────────────────────
+
+export type IngestRunOutcome =
+  | { ok: true; result: IngestResult }
+  | { ok: false; result: IngestResult; error: string; upstreamStatus?: number };
+
+async function startRun(): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from('ingest_runs')
+    .insert({ status: 'running' })
+    .select('id')
+    .single();
+  if (error || !data) {
+    // Recording the run is observability only; ingest without it.
+    console.error(`[ingest] could not create ingest_runs row: ${error ? dbErrorMessage(error) : 'no row returned'}`);
+    return null;
+  }
+  return data.id;
+}
+
+async function finishRun(runId: string | null, outcome: IngestRunOutcome): Promise<void> {
+  if (!runId) return;
+  const { error } = await supabaseAdmin
+    .from('ingest_runs')
+    .update({
+      status: outcome.ok ? 'ok' : 'failed',
+      finished_at: new Date().toISOString(),
+      stats: outcome.result,
+      error: outcome.ok ? null : outcome.error,
+    })
+    .eq('id', runId);
+  if (error) {
+    console.error(`[ingest] could not update ingest_runs row ${runId}: ${dbErrorMessage(error)}`);
+  }
+}
+
+/**
+ * Cron entry point. Inserts a 'running' row in ingest_runs, runs the ingest,
+ * then marks the row 'ok' or 'failed'. A run killed by the platform timeout
+ * leaves its row in 'running'.
+ */
+export async function runIngestion(options: IngestOptions = {}): Promise<IngestRunOutcome> {
+  const runId = await startRun();
+  const stats = emptyResult();
+
+  let outcome: IngestRunOutcome;
+  try {
+    await ingestArticles(options, stats);
+    outcome = { ok: true, result: stats };
   } catch (err) {
-    console.error('Global article search error:', err);
+    const error = errorMessage(err);
+    console.error(`[ingest] run failed: ${error}`);
+    outcome = isFatal(err)
+      ? { ok: false, result: stats, error, upstreamStatus: err.status }
+      : { ok: false, result: stats, error };
   }
 
-  const costEstimate = (accountsChecked + GLOBAL_SEARCH_PAGES) * 0.003;
-
-  return {
-    accounts_checked: accountsChecked,
-    tweets_scanned: tweetsScanned,
-    articles_found: articlesFound,
-    new_articles: newArticles,
-    skipped_duplicates: skippedDuplicates,
-    skipped_low_quality: skippedLowQuality,
-    skipped_unavailable: skippedUnavailable,
-    skipped_blocked: skippedBlocked,
-    errors,
-    global_search_articles: globalSearchArticles,
-    cost_estimate_usd: Math.round(costEstimate * 10000) / 10000,
-    duration_ms: Date.now() - start,
-  };
+  await finishRun(runId, outcome);
+  return outcome;
 }
 
 // ─── Single Article Ingestion (by tweet ID) ─────────────────────────
 
+/** Never throws: every failure, including upstream errors, is returned as `error`. */
 export async function ingestSingleArticle(tweetId: string): Promise<IngestOutcome> {
-  const catMap = await loadCategoryMap();
+  try {
+    const catMap = await loadCategoryMap();
 
-  // Dedup check
-  const { data: existing } = await supabaseAdmin
-    .from('articles')
-    .select('id')
-    .eq('x_article_id', tweetId)
-    .maybeSingle();
+    // Dedup check
+    const { data: existing, error: existingErr } = await supabaseAdmin
+      .from('articles')
+      .select('id')
+      .eq('x_article_id', tweetId)
+      .maybeSingle();
+    if (existingErr) {
+      throw new Error(`articles lookup by x_article_id failed: ${dbErrorMessage(existingErr)}`);
+    }
 
-  if (existing) return { ok: false, error: 'already exists', articleId: existing.id };
+    if (existing) return { ok: false, error: 'already exists', articleId: existing.id };
 
-  // Fetch article via probe endpoint (manual submission doesn't have timeline context)
-  const article = await probeArticle(tweetId);
-  if (!article) return { ok: false, error: 'not an article or article not found' };
+    // Fetch article via probe endpoint (manual submission doesn't have timeline context)
+    const article = await probeArticle(tweetId);
+    if (!article) return { ok: false, error: 'not an article or article not found' };
 
-  const tweetUrl = `https://x.com/${article.author.userName}/status/${tweetId}`;
+    const tweetUrl = `https://x.com/${article.author.userName}/status/${tweetId}`;
 
-  return processArticle({
-    tweetId,
-    tweetUrl,
-    article,
-    author: article.author,
-    publishedAt: article.createdAt,
-    fallbackText: '',
-    stats: {
-      likeCount: article.likeCount ?? 0,
-      bookmarkCount: 0,
-      replyCount: article.replyCount ?? 0,
-      retweetCount: 0,
-    },
-    catMap,
-  });
+    return await processArticle({
+      tweetId,
+      tweetUrl,
+      article,
+      author: article.author,
+      publishedAt: article.createdAt,
+      fallbackText: '',
+      stats: {
+        likeCount: article.likeCount ?? 0,
+        bookmarkCount: 0,
+        replyCount: article.replyCount ?? 0,
+        retweetCount: 0,
+      },
+      catMap,
+    });
+  } catch (err) {
+    const error = errorMessage(err);
+    console.error(`[ingest] single ingest of tweet ${tweetId} failed: ${error}`);
+    return { ok: false, error };
+  }
 }
