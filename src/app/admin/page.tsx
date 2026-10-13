@@ -129,32 +129,15 @@ function SubmissionQueue() {
   useEffect(() => { fetchSubmissions(); }, [fetchSubmissions]);
 
   const handleApprove = async (submission: Submission) => {
-    // Create article from submission
-    const { data: article } = await (supabase
-      .from('articles') as any)
-      .insert({
-        x_url: submission.url,
-        title: `Submitted article`,
-        status: 'published',
-        source: 'submission',
-        featured: false,
-        author_id: submission.submitted_by,
-      })
-      .select('id')
-      .single();
-
-    // Update submission
-    const { data: { user } } = await supabase.auth.getUser();
-    await (supabase.from('submissions') as any)
-      .update({
-        status: 'approved',
-        article_id: article?.id || null,
-        reviewed_by: user?.id || null,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', submission.id);
-
-    await logAdminAction('approve_submission', 'submission', submission.id, { url: submission.url });
+    // Server route ingests the tweet and links the article (needs the
+    // service role, so it cannot run from the browser).
+    const res = await fetch(`/api/admin/submissions/${submission.id}/approve`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(`Approve failed: ${body.error || res.status}`);
+      return;
+    }
+    await logAdminAction('approve_submission', 'submission', submission.id, { url: submission.url, article_id: body.articleId });
     fetchSubmissions();
   };
 

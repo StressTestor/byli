@@ -13,6 +13,16 @@ function decodeCursor(cursor: string): string {
   return Buffer.from(cursor, 'base64').toString('utf-8');
 }
 
+function encodeOffsetCursor(offset: number): string {
+  return Buffer.from(`offset:${offset}`).toString('base64');
+}
+
+function decodeOffsetCursor(cursor: string): number {
+  const raw = Buffer.from(cursor, 'base64').toString('utf-8');
+  const n = Number(raw.startsWith('offset:') ? raw.slice(7) : NaN);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
+}
+
 function sortMap(sort: string): string {
   switch (sort) {
     case 'FOR_YOU': return 'FOR_YOU';
@@ -54,15 +64,16 @@ export const resolvers = {
       const cursor = args.after ? decodeCursor(args.after) : null;
       const sortKey = sortMap(args.sort || 'FOR_YOU');
 
-      // Use search function if search query provided
+      // Search is relevance-ranked, so it pages by offset, not by date.
       if (args.search) {
+        const offset = args.after ? decodeOffsetCursor(args.after) : 0;
         const { data, error } = await supabaseAdmin.rpc('search_articles', {
-          query: args.search,
-          lim: limit + 1,
-          off_set: 0, // TODO: cursor-based for search
+          p_query: args.search,
+          p_limit: limit + 1,
+          p_offset: offset,
         });
         if (error) throw new Error(error.message);
-        return formatConnection(data || [], limit);
+        return formatSearchConnection((data || []) as any[], limit, offset);
       }
 
       // Use feed function for standard queries
@@ -529,6 +540,58 @@ function formatFeedConnection(items: any[], limit: number) {
       hasPreviousPage: false,
       startCursor: edges[0]?.cursor || null,
       endCursor: lastRow ? encodeCursor(lastRow.published_at) : null,
+    },
+    totalCount: edges.length,
+  };
+}
+
+// search_articles returns flat rows (author_handle, like_count, ...). Shape
+// them like feed nodes so the Article type's non-null fields resolve.
+export function transformSearchRow(row: any): any {
+  return {
+    id: row.id,
+    title: row.title,
+    excerpt: row.excerpt,
+    xUrl: row.x_url,
+    coverImageUrl: row.cover_image_url,
+    readTimeMin: row.read_time_min,
+    featured: false,
+    publishedAt: row.published_at,
+    author: {
+      handle: row.author_handle,
+      displayName: row.author_display_name || row.author_handle,
+      verified: !!row.author_verified,
+      claimed: false,
+      followerCount: 0,
+      articleCount: 0,
+    },
+    categories: [],
+    stats: {
+      likeCount: row.like_count || 0,
+      bookmarkCount: 0,
+      commentCount: 0,
+      shareCount: 0,
+      ratingCount: 0,
+      avgRating: 0,
+    },
+  };
+}
+
+function formatSearchConnection(rows: any[], limit: number, offset: number) {
+  const hasNextPage = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const edges = filterBlockedTitles(page).map((row, i) => ({
+    node: transformSearchRow(row),
+    cursor: encodeOffsetCursor(offset + i + 1),
+  }));
+  return {
+    edges,
+    pageInfo: {
+      hasNextPage,
+      hasPreviousPage: offset > 0,
+      startCursor: edges[0]?.cursor || null,
+      // From the unfiltered page so hidden rows can't stall pagination.
+      endCursor: page.length ? encodeOffsetCursor(offset + page.length) : null,
     },
     totalCount: edges.length,
   };
