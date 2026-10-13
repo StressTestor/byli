@@ -20,7 +20,7 @@ Byline indexes, categorizes, and surfaces X Articles — a long-form content for
 ```bash
 git clone https://github.com/YOUR_USER/byline.git
 cd byline
-npm install
+pnpm install
 ```
 
 ### 3. Environment
@@ -40,13 +40,13 @@ supabase link --project-ref YOUR_PROJECT_REF
 supabase db push
 
 # Seed with demo data
-npm run db:seed
+pnpm db:seed
 ```
 
 ### 5. Run
 
 ```bash
-npm run dev
+pnpm dev
 # Open http://localhost:3000
 ```
 
