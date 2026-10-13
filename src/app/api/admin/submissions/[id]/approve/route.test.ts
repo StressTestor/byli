@@ -5,6 +5,8 @@ const state = vi.hoisted(() => ({
   isAdmin: true,
   submission: { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' } as any,
   updates: [] as any[],
+  updateFilters: [] as any[],
+  lostRace: false,
   upserts: [] as any[],
   ingest: vi.fn(),
 }));
@@ -22,7 +24,13 @@ vi.mock('@/lib/supabase-admin', () => {
     b.select = () => b;
     b.eq = () => b;
     b.maybeSingle = async () => ({ data: state.submission, error: null });
-    b.update = (row: any) => { state.updates.push({ table, row }); return { eq: async () => ({ error: null }) }; };
+    b.update = (row: any) => {
+      state.updates.push({ table, row });
+      const u: any = {};
+      u.eq = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
+      u.select = async () => ({ data: state.lostRace ? [] : [{ id: 's1' }], error: null });
+      return u;
+    };
     b.upsert = async (row: any) => { state.upserts.push({ table, row }); return { error: null }; };
     return b;
   };
@@ -40,6 +48,8 @@ beforeEach(() => {
   state.isAdmin = true;
   state.submission = { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' };
   state.updates = [];
+  state.updateFilters = [];
+  state.lostRace = false;
   state.upserts = [];
   state.ingest = vi.fn(async () => ({ ok: true, articleId: 'art-1' }));
 });
@@ -85,5 +95,15 @@ describe('approve submission route', () => {
     state.submission = { ...state.submission, url: 'https://x.com/a/status/2027172169336476151', status: 'approved' };
     expect((await call()).status).toBe(409);
     expect(state.ingest).not.toHaveBeenCalled();
+  });
+
+  it('only flips a submission that is still pending', async () => {
+    expect((await call()).status).toBe(200);
+    expect(state.updateFilters).toContainEqual(['status', 'pending']);
+
+    state.lostRace = true;
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/someone else/);
   });
 });

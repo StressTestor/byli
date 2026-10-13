@@ -4,6 +4,7 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { USERNAME_RE } from '@/lib/auth-callback';
 import {
   AuthLayout, Field, GitHubOAuthButton, OrDivider, SubmitButton, AuthMessage,
   PasswordStrength, MailIcon, LockIcon, UserIcon, ArrowIcon,
@@ -23,18 +24,19 @@ export default function SignupPage() {
     e.preventDefault();
     if (!username || !email || !password) { setError('All fields are required.'); return; }
     if (username.length < 3) { setError('Username must be at least 3 characters.'); return; }
+    if (!USERNAME_RE.test(username)) { setError('Usernames can use letters, numbers, _ and -, up to 39 characters.'); return; }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
 
     setLoading(true);
     setError(null);
 
     // 1. Create auth user
-    const { data, error: authError } = await supabase.auth.signUp({
+    const { error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/confirm`,
-        data: { username }, // stored in auth.users.raw_user_meta_data
+        data: { username }, // handle_new_user() copies this into profiles.username
       },
     });
 
@@ -42,15 +44,6 @@ export default function SignupPage() {
       setError(authError.message);
       setLoading(false);
       return;
-    }
-
-    // 2. Create profile row (service role handles this via trigger ideally,
-    //    but we do it client-side as fallback)
-    if (data.user) {
-      await supabase.from('profiles').upsert({
-        id: data.user.id,
-        username,
-      });
     }
 
     setLoading(false);

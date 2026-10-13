@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
 import { runHealthCheck } from '@/lib/health-check';
 import { useAdminProfile } from '@/hooks/useAdminProfile';
-import type { Profile, Submission, Article, SiteSetting, HealthCheck, UserRole } from '@/types/database';
+import type { Profile, Submission, Article, SiteSetting, HealthCheck } from '@/types/database';
 
 // ─── Admin Log Helper ────────────────────────────────────────
 
@@ -397,18 +397,6 @@ function UserManagement() {
 
   useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
 
-  const changeRole = async (profile: Profile, newRole: UserRole) => {
-    await supabase.from('profiles').update({ role: newRole }).eq('id', profile.id);
-    await logAdminAction('change_user_role', 'profile', profile.id, {
-      username: profile.username,
-      from: profile.role,
-      to: newRole,
-    });
-    fetchProfiles();
-  };
-
-  const roles: UserRole[] = ['user', 'moderator', 'admin'];
-
   return (
     <div>
       <h2 className="text-lg font-semibold text-white mb-4">User Management</h2>
@@ -437,15 +425,9 @@ function UserManagement() {
                   </div>
                 </div>
               </div>
-              <select
-                value={profile.role || 'user'}
-                onChange={e => changeRole(profile, e.target.value as UserRole)}
-                className="px-2 py-1.5 text-xs bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-300 focus:outline-none focus:border-zinc-500"
-              >
-                {roles.map(role => (
-                  <option key={role} value={role}>{role}</option>
-                ))}
-              </select>
+              {/* Roles are read-only here. Admin is granted by the auth callback
+                  (ADMIN_GITHUB_ID); anything else is a SQL change. */}
+              <span className="px-2 py-1.5 text-xs text-zinc-400">{profile.role}</span>
             </div>
           ))}
         </div>

@@ -72,7 +72,9 @@ export async function POST(
     if (catErr) console.error('[approve] category link failed:', catErr);
   }
 
-  const { error: updErr } = await supabaseAdmin
+  // Conditional on still being pending, so a concurrent approve/reject wins
+  // cleanly instead of both writing.
+  const { data: updated, error: updErr } = await supabaseAdmin
     .from('submissions')
     .update({
       status: 'approved',
@@ -80,10 +82,15 @@ export async function POST(
       reviewed_by: user.id,
       reviewed_at: new Date().toISOString(),
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('id');
   if (updErr) {
     console.error('[approve] submission update failed:', updErr);
     return NextResponse.json({ error: 'Article ingested but submission update failed' }, { status: 500 });
+  }
+  if (!updated || updated.length === 0) {
+    return NextResponse.json({ error: 'Submission was reviewed by someone else' }, { status: 409 });
   }
 
   return NextResponse.json({ ok: true, articleId, created: outcome.ok });
