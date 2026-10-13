@@ -25,12 +25,12 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: 'Login required' }, { status: 401 });
   }
-  const { data: isAdmin, error: adminErr } = await (supabase.rpc as any)('is_admin');
+  const { data: isAdmin, error: adminErr } = await supabase.rpc('is_admin');
   if (adminErr || isAdmin !== true) {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
   }
 
-  const { data: submission, error: subErr } = await (supabaseAdmin as any)
+  const { data: submission, error: subErr } = await supabaseAdmin
     .from('submissions')
     .select('id, url, status, category_id')
     .eq('id', id)
@@ -63,7 +63,7 @@ export async function POST(
   }
 
   if (submission.category_id) {
-    const { error: catErr } = await (supabaseAdmin as any)
+    const { error: catErr } = await supabaseAdmin
       .from('article_categories')
       .upsert(
         { article_id: articleId, category_id: submission.category_id },
@@ -72,7 +72,7 @@ export async function POST(
     if (catErr) console.error('[approve] category link failed:', catErr);
   }
 
-  const { error: updErr } = await (supabaseAdmin as any)
+  const { error: updErr } = await supabaseAdmin
     .from('submissions')
     .update({
       status: 'approved',

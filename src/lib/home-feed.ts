@@ -84,13 +84,10 @@ export async function getHomeFeed(opts: {
 } = {}): Promise<FeedPage> {
   const { sort = 'POPULAR', category = null, cursor = null, pageSize = 20 } = opts;
   try {
-    // supabaseAdmin isn't generic-typed yet (tracked as audit P1-10), so .rpc
-    // args infer as `undefined`; cast like the rest of the codebase until the
-    // client gets its Database types.
-    const { data, error } = await (supabaseAdmin.rpc as any)('get_feed', {
-      p_category_slug: category,
+    const { data, error } = await supabaseAdmin.rpc('get_feed', {
+      p_category_slug: category ?? undefined,
       p_sort: sort,
-      p_cursor: cursor,
+      p_cursor: cursor ?? undefined,
       p_limit: pageSize + 1, // one extra to detect hasNextPage
     });
     if (error || !data) return { articles: [], hasNextPage: false, endCursor: null };

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { runHealthCheck } from '@/lib/health-check';
 import { useAdminProfile } from '@/hooks/useAdminProfile';
 import type { Submission, Article, HealthCheck, Profile, UserRole } from '@/types/database';
 
@@ -101,7 +102,7 @@ function SidebarSubmissions() {
 
   const handleReject = async (sub: Submission) => {
     const { data: { user } } = await supabase.auth.getUser();
-    await (supabase.from('submissions') as any).update({
+    await supabase.from('submissions').update({
       status: 'rejected',
       reviewed_by: user?.id || null,
       reviewed_at: new Date().toISOString(),
@@ -122,7 +123,7 @@ function SidebarSubmissions() {
           </a>
           <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
             {sub.category_label && <span className="px-1 py-0.5 bg-zinc-800 rounded text-zinc-400">{sub.category_label}</span>}
-            <span>{new Date(sub.created_at).toLocaleDateString()}</span>
+            <span>{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</span>
           </div>
           <div className="flex gap-1.5 mt-2">
             <button onClick={() => handleApprove(sub)} className="flex-1 px-2 py-1 text-[11px] font-medium bg-green-500/10 text-green-400 border border-green-500/30 rounded hover:bg-green-500/20 transition-colors">
@@ -159,14 +160,14 @@ function SidebarArticles() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const toggleFeatured = async (a: Article) => {
-    const { error } = await (supabase.from('articles') as any).update({ featured: !a.featured }).eq('id', a.id);
+    const { error } = await supabase.from('articles').update({ featured: !a.featured }).eq('id', a.id);
     if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction(a.featured ? 'unfeature_article' : 'feature_article', 'article', a.id, { title: a.title });
     fetch();
   };
 
   const changeStatus = async (a: Article, status: 'published' | 'archived') => {
-    const { error } = await (supabase.from('articles') as any).update({ status }).eq('id', a.id);
+    const { error } = await supabase.from('articles').update({ status }).eq('id', a.id);
     if (error) { alert(`Failed to update: ${error.message}`); return; }
     await logAdminAction('change_article_status', 'article', a.id, { from: a.status, to: status });
     fetch();
@@ -224,7 +225,7 @@ function SidebarSettings() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('site_settings' as any).select('*');
+    const { data } = await supabase.from('site_settings').select('*');
     if (data) {
       const map: Record<string, boolean> = {};
       (data as any[]).forEach(s => { map[s.key] = s.value === 'true' || s.value === '1'; });
@@ -237,7 +238,7 @@ function SidebarSettings() {
 
   const toggle = async (key: string) => {
     const newValue = !settings[key];
-    await supabase.from('site_settings' as any).upsert({ key, value: String(newValue), updated_at: new Date().toISOString() } as any);
+    await supabase.from('site_settings').upsert({ key, value: String(newValue), updated_at: new Date().toISOString() } as any);
     setSettings(prev => ({ ...prev, [key]: newValue }));
     await logAdminAction('toggle_setting', 'site_setting', key, { value: newValue });
   };
@@ -278,7 +279,7 @@ function SidebarUsers() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const changeRole = async (p: Profile, newRole: UserRole) => {
-    await (supabase.from('profiles') as any).update({ role: newRole }).eq('id', p.id);
+    await supabase.from('profiles').update({ role: newRole }).eq('id', p.id);
     await logAdminAction('change_user_role', 'profile', p.id, { username: p.username, from: p.role, to: newRole });
     fetch();
   };
@@ -321,13 +322,7 @@ function SidebarHealth() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      try {
-        const { data } = await supabase.rpc('run_db_health_check' as any);
-        if (data) setChecks(Array.isArray(data) ? data : [data]);
-      } catch {
-        const { data } = await supabase.from('health_checks' as any).select('*').order('checked_at', { ascending: false }).limit(5);
-        if (data) setChecks(data as any);
-      }
+      setChecks(await runHealthCheck(supabase, 5));
       setLoading(false);
     })();
   }, []);
