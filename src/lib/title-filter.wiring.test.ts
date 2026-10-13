@@ -97,8 +97,8 @@ describe('RSS/Atom/JSON feed fetchers', () => {
   it('hides blocked titles', async () => {
     const { fetchLatestArticles } = await import('./feed');
     state.rpcRows = [
-      { article_id: '1', title: BAD, published_at: '2026-01-02T00:00:00Z' },
-      { article_id: '2', title: 'Fine', published_at: '2026-01-01T00:00:00Z' },
+      { id: '1', title: BAD, published_at: '2026-01-02T00:00:00Z' },
+      { id: '2', title: 'Fine', published_at: '2026-01-01T00:00:00Z' },
     ];
     const items = await fetchLatestArticles();
     expect(items.map((i) => i.id)).toEqual(['2']);
