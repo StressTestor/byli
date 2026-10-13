@@ -44,12 +44,12 @@ content is scraped via twitterapi.io and not licensed, so:
 - **ingest change:** `excerpt = article.preview_text` only (X's own intended teaser). **drop the `|| cleanText.slice(0,300)` body-slice fallback.** if `preview_text` is absent, no excerpt (or a future LinkDrift-authored blurb).
 - **cap** displayed excerpt to ~140 chars, always with `@handle` attribution + outbound link to x.com.
 - **re-derive existing rows:** existing excerpts may be body-derived; re-ingest / backfill so no stored excerpt is a body slice.
-- **article pages:** with teaser-only, they're IP-safe even if indexed. noindex is now a *SEO* choice, not legal. default: keep `noindex,follow` (thin-content avoidance, concentrate ranking on curation pages) + drop article URLs from the sitemap for coherence. revisit if/when articles get original LinkDrift value-add.
+- **article pages:** with teaser-only, they're IP-safe even if indexed. noindex is now a *SEO* choice, not legal. **decided 2026-10-13: keep article pages indexable and in the sitemap**, which is what production does. the earlier default here was `noindex,follow` plus dropping article URLs from the sitemap; that was never shipped. revisit if thin-content signals show up in search console.
 - **rankable surface = curation pages** (home/category/author/topic), self-canonical, built on LinkDrift's own text (titles as teasers, category/author framing, ratings, future blurbs).
 
 ## explicitly OUT of scope here
 
-programmatic hub build-out (topic/tag/archive pages), the full original-content layer (AI summaries / why-it-matters), and the type-the-Supabase-clients refactor — separate tracks on the roadmap.
+programmatic hub build-out (topic/tag/archive pages), the full original-content layer (AI summaries / why-it-matters), and the type-the-Supabase-clients refactor (since done, 2026-10-13) — separate tracks on the roadmap.
 
 ---
 *spec for the refined-dark polish + homepage SSR rebuild. decisions captured from the 2026-06-03 brainstorm.*

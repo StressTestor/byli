@@ -1,179 +1,62 @@
-# Byline
+# linkdrift
 
-**The discovery layer for X Articles.**
+long-form X Articles have no discovery on X. linkdrift finds them, sorts them by topic, and puts them on one feed: [linkdrift.app](https://linkdrift.app).
 
-Byline indexes, categorizes, and surfaces X Articles — a long-form content format with no native discovery mechanism. The website is the demo. The API and dataset are the product.
+a cron at 00:00 UTC pulls articles from 9 seed accounts plus a global search through [twitterapi.io](https://twitterapi.io), classifies them, and stores a teaser (title, X's own preview text, author, link back to x.com). no article bodies get republished. 799 articles indexed as of 2026-10-13.
 
----
+what's there:
 
-## Quick Start
+- server-rendered home feed with for you / latest / popular sorts
+- category and author pages, search
+- RSS, Atom and JSON feeds (`/feed`, `/feed/<category>`, `/feed/author/<handle>`)
+- accounts via GitHub, X or email: likes, bookmarks, ratings, article submissions
+- X authors can claim their author page by signing in with X
+- admin dashboard: submission queue, article moderation, seed accounts, health checks
 
-### 1. Prerequisites
+architecture, schema, env vars and the gotchas list live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- Node.js 18+
-- [Supabase CLI](https://supabase.com/docs/guides/cli) (`npm i -g supabase`)
-- A [Supabase project](https://supabase.com/dashboard)
-- A [Netrows API key](https://netrows.com) ($49/mo)
+## stack
 
-### 2. Clone & Install
+| | |
+|---|---|
+| app | Next.js 14 (app router), TypeScript, Tailwind |
+| data + auth | Supabase (Postgres, RLS on every table) |
+| api | GraphQL (Apollo) at `/api/graphql`, used by the site's client components |
+| ingestion | twitterapi.io, Vercel cron |
+| hosting | Vercel |
+
+## run it
+
+needs node 20+, pnpm, and a Supabase project.
 
 ```bash
-git clone https://github.com/YOUR_USER/byline.git
-cd byline
 pnpm install
+cp .env.example .env.local   # fill in supabase + twitterapi.io keys
+pnpm dev
 ```
 
-### 3. Environment
+database: `supabase/migrations/` is the full production history, one file per version. on a fresh project:
 
 ```bash
-cp .env.example .env.local
-# Fill in your Supabase URL, keys, and Netrows API key
-```
-
-### 4. Database
-
-```bash
-# Link to your Supabase project
-supabase link --project-ref YOUR_PROJECT_REF
-
-# Run the migration
-supabase db push
-
-# Seed with demo data
+supabase link --project-ref <your-ref>
+pnpm db:push
 pnpm db:seed
 ```
 
-### 5. Run
+then turn on GitHub (and optionally X) in Supabase Auth with `https://<your-domain>/auth/callback` as the redirect, and set `ADMIN_GITHUB_ID` to your GitHub numeric id so your first GitHub login becomes admin.
+
+## checks
 
 ```bash
-pnpm dev
-# Open http://localhost:3000
+pnpm test           # vitest
+pnpm tsc --noEmit   # 0 errors, and the build type-checks
+pnpm build
 ```
 
----
+## deploy
 
-## Architecture
+push to `main`. Vercel builds it and the cron in `vercel.json` runs `/api/ingest` once a day (Hobby plan). to run it by hand: Vercel → project → settings → cron jobs → run.
 
-```
-Netrows API ──→ Ingestion Worker ──→ PostgreSQL (Supabase)
-                                          │
-Community Submissions ──────────────────→ │
-                                          ↓
-                                    GraphQL API (Apollo)
-                                          │
-                                    ┌─────┴─────┐
-                                    │            │
-                              Next.js App   Public API
-                              (Frontend)    (Developers)
-```
+## costs
 
-See `Byline-Architecture-Spec-v1.docx` for the complete technical specification.
-
-## Project Structure
-
-```
-byline/
-├── supabase/
-│   └── migrations/
-│       └── <version>_<name>.sql      # migrations, named by the version prod recorded
-├── src/
-│   ├── app/
-│   │   └── api/
-│   │       ├── graphql/route.ts      # GraphQL endpoint
-│   │       └── ingest/route.ts       # Cron ingestion worker
-│   ├── graphql/
-│   │   ├── schema.graphql            # GraphQL SDL
-│   │   └── resolvers.ts             # Query/mutation logic
-│   ├── hooks/
-│   │   └── api.ts                    # React hooks (useFeed, useAuth, etc.)
-│   ├── lib/
-│   │   └── supabase.ts              # Supabase client (browser/server/admin)
-│   ├── types/
-│   │   └── database.ts              # TypeScript types
-│   └── scripts/
-│       └── seed.ts                   # Database seeder
-├── .env.example
-├── package.json
-├── vercel.json                       # Cron config
-├── next.config.js
-└── tsconfig.json
-```
-
-## Key Files
-
-| File | What It Is |
-|------|-----------|
-| `supabase/migrations/` | Full migration history, one file per version in production's `schema_migrations`. Replays to the live schema. |
-| `schema.graphql` | Public API contract. Relay-style pagination, rate limit tiers, viewer-aware fields. |
-| `resolvers.ts` | All query/mutation logic. Auth-gated mutations, cursor pagination, search. |
-| `route.ts` (ingest) | Cron worker pulling from Netrows, auto-categorizing, deduplicating. |
-| `api.ts` (hooks) | Frontend data layer. `useFeed`, `useArticle`, `useEngagement`, `useAuth`. |
-| `supabase.ts` | Three client variants: browser (RLS), server (cookie-based), admin (service role). |
-
-## API
-
-GraphQL endpoint: `POST /api/graphql`
-
-```graphql
-# Browse the feed
-query {
-  articles(first: 20, sort: FOR_YOU, category: "tech") {
-    edges {
-      node { id title author { handle } stats { likeCount } }
-      cursor
-    }
-    pageInfo { hasNextPage endCursor }
-  }
-}
-
-# Single article
-query {
-  article(id: "uuid-here") {
-    title bodyPreview xUrl
-    author { handle displayName verified }
-    stats { likeCount bookmarkCount avgRating }
-  }
-}
-
-# Engagement (requires auth)
-mutation {
-  likeArticle(articleId: "uuid-here") {
-    id stats { likeCount } viewerHasLiked
-  }
-}
-```
-
-### Rate Limits
-
-| Tier | Requests/min | Cost |
-|------|-------------|------|
-| Public | 30 | Free |
-| Developer | 300 | Free (key required) |
-| Pro | 3,000 | $29/mo |
-| Enterprise | Custom | Custom |
-
-## Deploy
-
-```bash
-# Deploy to Vercel
-vercel --prod
-
-# The cron job (/api/ingest every 15 min) activates automatically via vercel.json
-```
-
-## Roadmap
-
-- [x] Database schema with triggers and RLS
-- [x] GraphQL API with auth-gated mutations
-- [x] Ingestion pipeline (Netrows)
-- [x] Frontend hooks
-- [ ] Next.js pages (port from MVP React component)
-- [ ] Auth UI (login/signup/X OAuth)
-- [ ] Author claiming flow
-- [ ] Developer portal + API key management
-- [ ] Recommendation engine v2 (collaborative filtering)
-- [ ] Analytics dashboard for claimed authors
-
----
-
-**© 2026 Byline**
+twitterapi.io is pay as you go; the ingest code budgets $0.003 per request. with 9 seed accounts and 3 pages of global search a run comes to roughly $0.04, so about $1.10 a month at one run a day. hosting is Vercel Hobby plus one Supabase project.
