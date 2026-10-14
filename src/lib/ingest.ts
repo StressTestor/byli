@@ -21,6 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin';
 import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from '@/lib/ingest-utils';
 import { isBlockedTitle } from '@/lib/title-filter';
 import { runWithConcurrency } from '@/lib/concurrency';
+import { sourceRefreshPatch, type RefreshableArticle } from './article-source-refresh';
 
 // ─── Config ──────────────────────────────────────────────────────────
 
@@ -498,26 +499,28 @@ async function loadCategoryMap(): Promise<Map<string, string>> {
 // ─── Dedup ──────────────────────────────────────────────────────────
 
 /**
- * Returns the id of an article matching either the tweet URL or the tweet id.
+ * Returns an article matching either the tweet URL or the tweet id.
  * Two parameterized lookups: values are never spliced into PostgREST filter
  * syntax, so a URL containing ',' or ')' cannot change the query.
  */
-async function findExistingArticle(tweetUrl: string, tweetId: string): Promise<string | null> {
+const REFRESH_COLUMNS = 'id,x_article_id,x_url,author_id,author:authors(x_user_id),source,status,featured,indexed_at,updated_at,title,excerpt,body_preview,read_time_min';
+
+async function findExistingArticle(tweetUrl: string, tweetId: string): Promise<RefreshableArticle | null> {
   const byUrl = await supabaseAdmin
     .from('articles')
-    .select('id')
+    .select(REFRESH_COLUMNS)
     .eq('x_url', tweetUrl)
     .maybeSingle();
   if (byUrl.error) throw new Error(`articles lookup by x_url failed: ${dbErrorMessage(byUrl.error)}`);
-  if (byUrl.data) return byUrl.data.id;
+  if (byUrl.data) return byUrl.data as unknown as RefreshableArticle;
 
   const byId = await supabaseAdmin
     .from('articles')
-    .select('id')
+    .select(REFRESH_COLUMNS)
     .eq('x_article_id', tweetId)
     .maybeSingle();
   if (byId.error) throw new Error(`articles lookup by x_article_id failed: ${dbErrorMessage(byId.error)}`);
-  return byId.data?.id ?? null;
+  return byId.data as unknown as RefreshableArticle | null;
 }
 
 // ─── Ingestion Logic ─────────────────────────────────────────────────
@@ -529,6 +532,8 @@ export type IngestResult = {
   articles_found: number;
   new_articles: number;
   skipped_duplicates: number;
+  /** Untouched imported rows refreshed from already-fetched timeline/search data. */
+  refreshed_articles: number;
   skipped_low_quality: number;
   skipped_unavailable: number;
   skipped_blocked: number;
@@ -556,6 +561,7 @@ function emptyResult(): IngestResult {
     articles_found: 0,
     new_articles: 0,
     skipped_duplicates: 0,
+    refreshed_articles: 0,
     skipped_low_quality: 0,
     skipped_unavailable: 0,
     skipped_blocked: 0,
@@ -571,12 +577,32 @@ async function ingestArticleTweet(
   tweet: TimelineTweet,
   handle: string,
   catMap: Map<string, string>,
-): Promise<'new' | 'duplicate' | 'blocked' | 'error'> {
+  refreshBudget: { remaining: number; seen: Set<string> },
+): Promise<'new' | 'refreshed' | 'duplicate' | 'blocked' | 'error'> {
   if (!tweet.article) return 'error';
 
   const tweetUrl = tweet.url || `https://x.com/${handle}/status/${tweet.id}`;
   try {
-    if (await findExistingArticle(tweetUrl, tweet.id)) return 'duplicate';
+    const row = await findExistingArticle(tweetUrl, tweet.id);
+    if (row) {
+      if (refreshBudget.remaining <= 0 || refreshBudget.seen.has(row.id)) return 'duplicate';
+      refreshBudget.seen.add(row.id);
+      const patch = sourceRefreshPatch(row, {
+        tweetId: tweet.id, tweetUrl, authorId: tweet.author?.id, article: tweet.article,
+      });
+      if (!patch) return 'duplicate';
+      // Reserve before awaiting: concurrent seed workers share this per-run cap.
+      refreshBudget.remaining--;
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from('articles').update(patch)
+        .eq('id', row.id).eq('x_article_id', row.x_article_id!)
+        .eq('x_url', row.x_url).eq('author_id', row.author_id)
+        .eq('source', 'twitterapi').eq('status', 'published').eq('featured', false)
+        .eq('indexed_at', row.indexed_at!).eq('updated_at', row.updated_at!)
+        .select('id').maybeSingle();
+      if (updateError) throw new Error(`refresh update failed: ${dbErrorMessage(updateError)}`);
+      return updated ? 'refreshed' : 'duplicate';
+    }
   } catch (err) {
     console.error(`[ingest] dedup check failed for tweet ${tweet.id}: ${errorMessage(err)}`);
     return 'error';
@@ -619,6 +645,8 @@ export async function ingestArticles(
     runBudgetMs = RUN_BUDGET_MS,
   } = options;
   const start = Date.now();
+  // At most 20 content-only writes; reuse dedup reads and existing upstream calls.
+  const refreshBudget = { remaining: 20, seen: new Set<string>() };
   const elapsed = () => Date.now() - start;
 
   try {
@@ -645,8 +673,9 @@ export async function ingestArticles(
             if (!tweet.article) continue;
             stats.articles_found++;
 
-            const outcome = await ingestArticleTweet(tweet, handle, catMap);
+            const outcome = await ingestArticleTweet(tweet, handle, catMap, refreshBudget);
             if (outcome === 'new') stats.new_articles++;
+            else if (outcome === 'refreshed') stats.refreshed_articles++;
             else if (outcome === 'duplicate') stats.skipped_duplicates++;
             else if (outcome === 'blocked') stats.skipped_blocked++;
             else stats.errors++;
@@ -701,10 +730,12 @@ export async function ingestArticles(
         }
 
         const handle = tweet.author?.userName || 'unknown';
-        const outcome = await ingestArticleTweet(tweet, handle, catMap);
+        const outcome = await ingestArticleTweet(tweet, handle, catMap, refreshBudget);
         if (outcome === 'new') {
           stats.new_articles++;
           stats.global_search_articles++;
+        } else if (outcome === 'refreshed') {
+          stats.refreshed_articles++;
         } else if (outcome === 'duplicate') {
           stats.skipped_duplicates++;
         } else if (outcome === 'blocked') {

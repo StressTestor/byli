@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import type { Article, Author, Category, ArticleStats } from '@/types/database';
 import { serializeJsonLd } from './json-ld';
+import { getRelatedArticles } from './related-articles';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -30,60 +31,6 @@ async function getArticle(id: string): Promise<ArticleRow | null> {
 
   if (error || !data) return null;
   return data as unknown as ArticleRow;
-}
-
-async function getRelatedArticles(
-  articleId: string,
-  authorId: string,
-  categoryIds: string[],
-  limit = 4
-) {
-  // try same author first
-  const { data: authorArticles } = await supabaseAdmin
-    .from('articles')
-    .select(`
-      id, title, excerpt, x_url, read_time_min, published_at, cover_image_url,
-      author:authors(handle, display_name, verified),
-      stats:article_stats(like_count, bookmark_count)
-    `)
-    .eq('author_id', authorId)
-    .eq('status', 'published')
-    .neq('id', articleId)
-    .order('published_at', { ascending: false })
-    .limit(limit);
-
-  const results = (authorArticles || []) as any[];
-
-  // if not enough, fill from same categories
-  if (results.length < limit && categoryIds.length > 0) {
-    const existingIds = [articleId, ...results.map((a: any) => a.id)];
-    const { data: catArticles } = await supabaseAdmin
-      .from('article_categories')
-      .select(`
-        article:articles(
-          id, title, excerpt, x_url, read_time_min, published_at, cover_image_url,
-          author:authors(handle, display_name, verified),
-          stats:article_stats(like_count, bookmark_count)
-        )
-      `)
-      .in('category_id', categoryIds)
-      .limit(limit * 3);
-
-    const catResults = (catArticles || [])
-      .map((row: any) => row.article)
-      .filter((a: any) => a && !existingIds.includes(a.id));
-
-    // dedupe
-    const seen = new Set(existingIds);
-    for (const art of catResults) {
-      if (!seen.has(art.id) && results.length < limit) {
-        seen.add(art.id);
-        results.push(art);
-      }
-    }
-  }
-
-  return results.slice(0, limit);
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -176,11 +123,9 @@ export default async function ArticlePage({
   }
 
   const categories = article.categories?.map((ac) => ac.category) || [];
-  const categoryIds = categories.map((c) => c.id);
   const relatedArticles = await getRelatedArticles(
     article.id,
-    article.author_id,
-    categoryIds
+    article.author_id
   );
 
   const stats = article.stats || {
