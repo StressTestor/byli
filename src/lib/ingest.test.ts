@@ -393,3 +393,105 @@ describe('seed account rotation', () => {
     expect(stamps[0].payload).toHaveProperty('last_checked_at');
   });
 });
+
+describe('first source refresh from already-fetched payloads', () => {
+  const stamp = '2026-10-01T00:00:00.123456+00:00';
+  const stored = (id = '2110162929957953604') => ({
+    id: `existing-${id}`, x_article_id: id, x_url: `https://x.com/writer/status/${id}`,
+    author_id: 'author-1', author: { x_user_id: 'u1' }, status: 'published', featured: false,
+    source: 'twitterapi', indexed_at: stamp, updated_at: stamp,
+    title: 'Old', excerpt: 'Old', body_preview: 'Old', read_time_min: 1,
+  });
+  const changedTweet = (id = '2110162929957953604') => ({ ...articleTweet(id), article: {
+    title: 'New substantive article', preview_text: 'New preview',
+    contents: [{ text: 'Complete source paragraph with useful information. '.repeat(20) }],
+  } });
+  beforeEach(() => {
+    seeds = { data: [{ handle: 'alice', high_yield: false }], error: null };
+    routes.timeline = () => json({ status: 'success', data: { tweets: [changedTweet()] } });
+    db.respond = q => {
+      if (q.table !== 'articles') return defaultRespond(q);
+      if (q.op === 'update') return { data: { id: 'existing-2110162929957953604' }, error: null };
+      const [_, column, value] = q.filters[0];
+      if (column === 'x_url') return { data: stored(String(value).split('/').pop()), error: null };
+      if (column === 'id') return { data: stored(String(value).replace('existing-', '')), error: null };
+      return defaultRespond(q);
+    };
+  });
+  it('refreshes content without inserting or touching authors, categories or stats; uses no article API request', async () => {
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(1);
+    expect(result.new_articles).toBe(0);
+    expect(result.skipped_duplicates).toBe(0);
+    const writes = db.calls.filter(q => q.op !== 'select' && q.table !== 'seed_accounts');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].table).toBe('articles');
+    expect(Object.keys(writes[0].payload).sort()).toEqual(['body_preview', 'excerpt', 'read_time_min', 'title']);
+    expect(writes[0].filters).toEqual([
+      ['eq', 'id', 'existing-2110162929957953604'], ['eq', 'x_article_id', '2110162929957953604'], ['eq', 'x_url', stored().x_url],
+      ['eq', 'author_id', 'author-1'], ['eq', 'source', 'twitterapi'], ['eq', 'status', 'published'],
+      ['eq', 'featured', false], ['eq', 'indexed_at', stamp], ['eq', 'updated_at', stamp],
+    ]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/article?'))).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // existing timeline + search, no refresh requests
+  });
+  it('reserves a shared bound of 20 attempts across concurrent seed workers', async () => {
+    seeds = { data: [{ handle: 'alice' }, { handle: 'bob' }], error: null };
+    routes.timeline = user => json({ status: 'success', data: { tweets:
+      Array.from({ length: 20 }, (_, i) => changedTweet(String(BigInt('2110162929957900000') + BigInt((user === 'alice' ? 100 : 200) + i)))),
+    } });
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(20);
+    expect(result.skipped_duplicates).toBe(20);
+    expect(db.calls.filter(q => q.table === 'articles' && q.op === 'update')).toHaveLength(20);
+    expect(db.calls.filter(q => q.table === 'articles' && q.op === 'select')).toHaveLength(40);
+  });
+  it('does not let ineligible duplicates spend the eligible write budget', async () => {
+    routes.timeline = () => json({ status: 'success', data: { tweets:
+      Array.from({ length: 25 }, (_, i) => changedTweet(String(BigInt('2110162929957900000') + BigInt(i)))),
+    } });
+    const previous = db.respond;
+    db.respond = q => {
+      const reply = previous(q);
+      if (q.table === 'articles' && q.op === 'select' && reply.data &&
+          BigInt(reply.data.x_article_id) < BigInt('2110162929957900024')) {
+        reply.data.source = 'manual';
+      }
+      return reply;
+    };
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(1);
+    expect(result.skipped_duplicates).toBe(24);
+  });
+  it('does not attempt the same existing row twice across seed and search responses', async () => {
+    routes.search = () => json({ status: 'success', tweets: [changedTweet()] });
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(1);
+    expect(db.calls.filter(q => q.table === 'articles' && q.op === 'update')).toHaveLength(1);
+  });
+  it('counts a concurrent edit that no longer matches compare-and-set as skipped', async () => {
+    const previous = db.respond;
+    db.respond = q => q.table === 'articles' && q.op === 'update' ? { data: null, error: null } : previous(q);
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(0);
+    expect(result.skipped_duplicates).toBe(1);
+    expect(result.errors).toBe(0);
+  });
+  it.each(['select', 'update'])('counts refresh %s errors without a fallback insert', async op => {
+    const previous = db.respond;
+    db.respond = q => q.table === 'articles' && q.op === op
+      ? { data: null, error: { message: 'synthetic DB failure' } } : previous(q);
+    const result = await ingestArticles(fast);
+    expect(result.refreshed_articles).toBe(0);
+    expect(result.errors).toBe(1);
+    expect(db.calls.some(q => q.table === 'articles' && q.op === 'insert')).toBe(false);
+  });
+  it('leaves a previously moderated row untouched', async () => {
+    const previous = db.respond;
+    db.respond = q => q.table === 'articles' && q.op === 'select'
+      ? { data: { ...stored(), status: 'hidden' }, error: null } : previous(q);
+    const result = await ingestArticles(fast);
+    expect(result.skipped_duplicates).toBe(1);
+    expect(db.calls.some(q => q.table === 'articles' && q.op === 'update')).toBe(false);
+  });
+});
