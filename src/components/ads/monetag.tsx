@@ -1,42 +1,22 @@
 /**
- * Linkdrift Ad System
- * 
- * Monetag integration with three layers:
- *   1. MoneytagProvider — loads MultiTag script in <head>, provides context
- *   2. NativeAd        — in-feed native ad unit (blends with article cards)
- *   3. BannerAd        — standard banner for sidebar/footer
- *   4. InterstitialAd  — shown on article redirect (user is leaving to X)
- * 
- * All ads are gated behind NEXT_PUBLIC_MONETAG_ENABLED=true
- * so they can be killed instantly for acquisition demos.
- * 
- * Placement strategy:
- *   - Native ad every 5-7 articles in feed (configurable)
- *   - Banner in sidebar on desktop (collapses on mobile)
- *   - Interstitial on article click-through to X (low friction — they're leaving anyway)
- *   - NO popunders, NO push notification prompts, NO pre-content blocking
- * 
- * Env vars:
- *   NEXT_PUBLIC_MONETAG_ENABLED=true|false
- *   NEXT_PUBLIC_MONETAG_SITE_ID=your-monetag-site-id
- *   NEXT_PUBLIC_MONETAG_NATIVE_ZONE=zone-id-for-native-ads
- *   NEXT_PUBLIC_MONETAG_BANNER_ZONE=zone-id-for-banner-ads
- *   NEXT_PUBLIC_MONETAG_INTERSTITIAL_ZONE=zone-id-for-interstitial
+ * Embedded Monetag slots only. Vendor code runs in opaque-origin sandboxed
+ * frames, never in the application's document or authenticated JS context.
+ * Site-wide MultiTag, popups and interstitials are deliberately unsupported.
+ * See ./README.md for configuration, compatibility and rollout limitations.
  */
 
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-
-// ─── Config ──────────────────────────────────────────────────────────
+import React, { createContext, useContext, useCallback } from 'react';
+import { AD_FRAME_PERMISSIONS, buildAdFrameDocument, isAdZone } from './ad-frame';
 
 interface AdConfig {
   enabled: boolean;
-  siteId: string;
+  siteId: string; // Legacy config only; the global MultiTag SDK is not loaded.
   nativeZone: string;
   bannerZone: string;
-  interstitialZone: string;
-  feedAdInterval: number; // show ad every N articles
+  interstitialZone: string; // Legacy config only; interstitials are disabled.
+  feedAdInterval: number;
 }
 
 const DEFAULT_CONFIG: AdConfig = {
@@ -48,7 +28,8 @@ const DEFAULT_CONFIG: AdConfig = {
   feedAdInterval: parseInt(process.env.NEXT_PUBLIC_FEED_AD_INTERVAL || '6', 10),
 };
 
-// ─── Context ─────────────────────────────────────────────────────────
+// Retain the async public API without consulting or invoking any parent global.
+const showInterstitial = async () => {};
 
 interface AdContextType {
   config: AdConfig;
@@ -59,116 +40,65 @@ interface AdContextType {
 const AdContext = createContext<AdContextType>({
   config: DEFAULT_CONFIG,
   loaded: false,
-  showInterstitial: async () => {},
+  showInterstitial,
 });
 
 export const useAds = () => useContext(AdContext);
 
-// ─── Provider ────────────────────────────────────────────────────────
-
 interface MoneytagProviderProps {
   children: React.ReactNode;
-  override?: Partial<AdConfig>; // for testing/demos
+  override?: Partial<AdConfig>;
 }
 
 export function MoneytagProvider({ children, override }: MoneytagProviderProps) {
-  const [loaded, setLoaded] = useState(false);
   const config = { ...DEFAULT_CONFIG, ...override };
 
-  useEffect(() => {
-    if (!config.enabled || !config.siteId) return;
-
-    // Check if already loaded
-    if (document.getElementById('monetag-multitag')) {
-      setLoaded(true);
-      return;
-    }
-
-    // Load Monetag MultiTag script
-    const script = document.createElement('script');
-    script.id = 'monetag-multitag';
-    script.src = `https://alwingore.com/js/site/${config.siteId}.js`;
-    script.async = true;
-    script.dataset.cfasync = 'false';
-
-    script.onload = () => setLoaded(true);
-    script.onerror = () => {
-      console.warn('[Linkdrift Ads] Monetag script failed to load');
-      setLoaded(false);
-    };
-
-    // Monetag wants script in <head>, as high as possible
-    document.head.appendChild(script);
-
-    return () => {
-      // Don't remove on unmount — Monetag manages its own lifecycle
-    };
-  }, [config.enabled, config.siteId]);
-
-  const showInterstitial = useCallback(async () => {
-    if (!config.enabled || !config.interstitialZone || !loaded) return;
-
-    try {
-      // Monetag SDK exposes show_ZONEID() globally after script load
-      const showFn = (window as any)[`show_${config.interstitialZone}`];
-      if (typeof showFn === 'function') {
-        await showFn({ requestVar: 'article_redirect' });
-      }
-    } catch (err) {
-      // Ad failed to show — not critical, user still redirects
-      console.warn('[Linkdrift Ads] Interstitial failed:', err);
-    }
-  }, [config.enabled, config.interstitialZone, loaded]);
-
+  // No shared SDK or load callback exists. A frame load would not prove ad fill.
   return (
-    <AdContext.Provider value={{ config, loaded, showInterstitial }}>
+    <AdContext.Provider value={{ config, loaded: false, showInterstitial }}>
       {children}
     </AdContext.Provider>
   );
 }
 
-// ─── Native Ad Component ─────────────────────────────────────────────
-// Renders an in-feed ad unit styled to blend with article cards.
-// Monetag native ads inject into a container div with a data-zone attr.
+interface EmbeddedAdProps {
+  zone: string;
+  slot: 'native-feed' | 'banner';
+  className?: string;
+  style: React.CSSProperties;
+}
+
+function EmbeddedAd({ zone, slot, className, style }: EmbeddedAdProps) {
+  const srcDoc = buildAdFrameDocument(zone);
+  if (!srcDoc) return null;
+
+  return (
+    <div className={className} data-ad-slot={slot} style={{ ...style, overflow: 'hidden' }}>
+      <iframe
+        key={zone}
+        title={slot === 'native-feed' ? 'Sponsored article advertisement' : 'Banner advertisement'}
+        srcDoc={srcDoc}
+        sandbox="allow-scripts"
+        allow={AD_FRAME_PERMISSIONS}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        style={{ display: 'block', width: '100%', height: '100%', border: 0 }}
+      />
+    </div>
+  );
+}
 
 interface NativeAdProps {
   className?: string;
 }
 
 export function NativeAd({ className }: NativeAdProps) {
-  const { config, loaded } = useAds();
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const { config } = useAds();
+  if (!config.enabled) return null;
 
-  useEffect(() => {
-    if (!config.enabled || !config.nativeZone || !loaded || !containerRef.current) return;
-
-    // Monetag native ads: create a container with the zone script
-    const existing = containerRef.current.querySelector('script');
-    if (existing) return; // already injected
-
-    const script = document.createElement('script');
-    script.async = true;
-    script.dataset.cfasync = 'false';
-    script.src = `https://alwingore.com/js/zone/${config.nativeZone}.js`;
-    containerRef.current.appendChild(script);
-  }, [config.enabled, config.nativeZone, loaded]);
-
-  if (!config.enabled || !config.nativeZone) return null;
-
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      data-ad-slot="native-feed"
-      style={{ minHeight: '100px', width: '100%' }}
-    >
-      {/* Monetag injects native ad content here */}
-    </div>
-  );
+  return <EmbeddedAd zone={config.nativeZone} slot="native-feed" className={className}
+    style={{ height: '100px', width: '100%', maxWidth: '100%' }} />;
 }
-
-// ─── Banner Ad Component ─────────────────────────────────────────────
-// Standard display banner. Used in sidebar (desktop) or between sections.
 
 interface BannerAdProps {
   className?: string;
@@ -176,45 +106,17 @@ interface BannerAdProps {
 }
 
 export function BannerAd({ className, size = 'responsive' }: BannerAdProps) {
-  const { config, loaded } = useAds();
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const { config } = useAds();
+  if (!config.enabled) return null;
 
-  const sizeStyles: Record<string, React.CSSProperties> = {
+  const sizeStyles: Record<NonNullable<BannerAdProps['size']>, React.CSSProperties> = {
     leaderboard: { width: '728px', height: '90px', maxWidth: '100%' },
-    rectangle: { width: '300px', height: '250px' },
-    responsive: { width: '100%', minHeight: '90px' },
+    rectangle: { width: '300px', height: '250px', maxWidth: '100%' },
+    responsive: { width: '100%', height: '90px', maxWidth: '100%' },
   };
 
-  useEffect(() => {
-    if (!config.enabled || !config.bannerZone || !loaded || !containerRef.current) return;
-
-    const existing = containerRef.current.querySelector('script');
-    if (existing) return;
-
-    const script = document.createElement('script');
-    script.async = true;
-    script.dataset.cfasync = 'false';
-    script.src = `https://alwingore.com/js/zone/${config.bannerZone}.js`;
-    containerRef.current.appendChild(script);
-  }, [config.enabled, config.bannerZone, loaded]);
-
-  if (!config.enabled || !config.bannerZone) return null;
-
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      data-ad-slot="banner"
-      style={sizeStyles[size]}
-    >
-      {/* Monetag injects banner ad here */}
-    </div>
-  );
+  return <EmbeddedAd zone={config.bannerZone} slot="banner" className={className} style={sizeStyles[size]} />;
 }
-
-// ─── Feed Ad Inserter ────────────────────────────────────────────────
-// Utility: takes an array of article elements and inserts NativeAd
-// components at the configured interval.
 
 interface FeedWithAdsProps {
   articles: React.ReactNode[];
@@ -224,7 +126,9 @@ interface FeedWithAdsProps {
 export function FeedWithAds({ articles, renderAd }: FeedWithAdsProps) {
   const { config } = useAds();
 
-  if (!config.enabled) {
+  // The custom renderer decorates the native slot. Avoid empty Sponsored cards
+  // when its zone is not configured, including placeholder environment values.
+  if (!config.enabled || !isAdZone(config.nativeZone)) {
     return <>{articles}</>;
   }
 
@@ -233,8 +137,6 @@ export function FeedWithAds({ articles, renderAd }: FeedWithAdsProps) {
 
   articles.forEach((article, i) => {
     result.push(article);
-
-    // Insert ad after every `interval` articles (not before the first batch)
     if ((i + 1) % interval === 0 && i < articles.length - 1) {
       result.push(
         <div key={`ad-${i}`} data-ad-position={i + 1}>
@@ -247,29 +149,11 @@ export function FeedWithAds({ articles, renderAd }: FeedWithAdsProps) {
   return <>{result}</>;
 }
 
-// ─── Article Redirect with Interstitial ──────────────────────────────
-// Hook: shows an interstitial ad before redirecting to X article URL.
-// The ad is non-blocking — if it fails, redirect happens anyway.
-
 export function useArticleRedirect() {
-  const { showInterstitial, config } = useAds();
-
   const redirectToArticle = useCallback(async (xUrl: string) => {
-    if (config.enabled) {
-      // Show interstitial, then redirect regardless of outcome
-      try {
-        await Promise.race([
-          showInterstitial(),
-          new Promise(resolve => setTimeout(resolve, 3000)), // 3s max wait
-        ]);
-      } catch {
-        // Ad failed, redirect anyway
-      }
-    }
-
-    // Open X article in new tab
+    // Keep the async API, but open synchronously with the user's gesture.
     window.open(xUrl, '_blank', 'noopener,noreferrer');
-  }, [showInterstitial, config.enabled]);
+  }, []);
 
   return { redirectToArticle };
 }
