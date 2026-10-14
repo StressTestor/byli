@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import type { FeedArticle } from '@/lib/home-feed';
-import { timeAgo, formatCount } from '@/lib/format';
+import { formatCount } from '@/lib/format';
+import { ArticleTime } from './article-time';
 
 function VerifiedCheck() {
   return (
@@ -50,7 +51,7 @@ export function ArticleCard({ article }: { article: FeedArticle }) {
             {article.publishedAt && (
               <>
                 <span aria-hidden="true" className="text-zinc-700">·</span>
-                <time dateTime={article.publishedAt}>{timeAgo(article.publishedAt)}</time>
+                <ArticleTime publishedAt={article.publishedAt} />
               </>
             )}
           </div>

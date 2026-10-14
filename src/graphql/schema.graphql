@@ -147,13 +147,13 @@ type Query {
     after: String
   ): ArticleConnection!
 
-  """List all categories with article counts"""
+  """List categories in display order (up to 50), with optional article counts"""
   categories: [Category!]!
 
   """Get the current authenticated user's profile"""
   me: User
 
-  """Get the current user's submissions"""
+  """Get the current user's latest 50 submissions"""
   mySubmissions(status: SubmissionStatus): [Submission!]!
 }
 

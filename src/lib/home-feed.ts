@@ -4,11 +4,9 @@
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { filterBlockedTitles } from '@/lib/title-filter';
-
-// get_feed matches these exact uppercase strings; anything else silently
-// falls through to the FOR_YOU score ordering. Always pass one of these.
-export const FEED_SORTS = ['FOR_YOU', 'LATEST', 'POPULAR'] as const;
-export type FeedSort = (typeof FEED_SORTS)[number];
+import { getFeedPage } from '@/lib/feed-page';
+import type { FeedSort } from '@/lib/feed-pagination';
+export { FEED_SORTS, type FeedSort } from '@/lib/feed-pagination';
 
 export interface FeedArticle {
   id: string;
@@ -84,23 +82,16 @@ export async function getHomeFeed(opts: {
 } = {}): Promise<FeedPage> {
   const { sort = 'POPULAR', category = null, cursor = null, pageSize = 20 } = opts;
   try {
-    const { data, error } = await supabaseAdmin.rpc('get_feed', {
-      p_category_slug: category ?? undefined,
-      p_sort: sort,
-      p_cursor: cursor ?? undefined,
-      p_limit: pageSize + 1, // one extra to detect hasNextPage
-    });
-    if (error || !data) return { articles: [], hasNextPage: false, endCursor: null };
-    const rows = data as any[];
-    const hasNextPage = rows.length > pageSize;
-    const page = rows.slice(0, pageSize).map(mapRow);
-    // Cursor comes from the unfiltered page so hidden items can't stall Load more.
-    const endCursor = page.length ? page[page.length - 1].publishedAt : null;
-    return { articles: filterBlockedTitles(page), hasNextPage, endCursor };
+    const page = await getFeedPage({ sort, category, after: cursor, first: pageSize });
+    return {
+      articles: filterBlockedTitles(page.rows.map(mapRow)),
+      hasNextPage: page.hasNextPage,
+      endCursor: page.endCursor,
+    };
   } catch (err) {
     // Never let a feed hiccup take down the homepage — render the shell — but
     // log it so an outage is visible and not mistaken for "no articles".
-    console.error('[home-feed] getHomeFeed failed:', err);
+    console.error('[home-feed] getHomeFeed failed');
     return { articles: [], hasNextPage: false, endCursor: null };
   }
 }

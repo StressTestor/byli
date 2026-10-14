@@ -7,24 +7,29 @@ import type { Profile } from '@/types/database';
 
 export function useAdminProfile() {
   const { user, loading: authLoading } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const supabase = createBrowserClient();
+  const [result, setResult] = useState<{ userId: string; profile: Profile | null } | null>(null);
+  const userId = user?.id;
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) { setLoading(false); return; }
-
-    supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
+    let active = true;
+    if (authLoading || !userId) {
+      setResult(null);
+      return () => { active = false; };
+    }
+    const supabase = createBrowserClient();
+    Promise.resolve(supabase.from('profiles').select('*').eq('id', userId).single())
       .then(({ data }) => {
-        setProfile(data as Profile | null);
-        setLoading(false);
+        if (active) setResult({ userId, profile: data?.id === userId ? data as Profile : null });
+      })
+      .catch(() => {
+        if (active) setResult({ userId, profile: null });
       });
-  }, [user, authLoading]);
+    return () => { active = false; };
+  }, [userId, authLoading]);
 
-  return { user, profile, loading: authLoading || loading, isAdmin: profile?.role === 'admin' };
+  // Bind results to their session before rendering, not only after the effect
+  // runs. A previous admin result must never authorize a different session UI.
+  const profile = !authLoading && userId && result && result.userId === userId ? result.profile : null;
+  const loading = authLoading || Boolean(userId && result?.userId !== userId);
+  return { user, profile, loading, isAdmin: profile?.role === 'admin' };
 }

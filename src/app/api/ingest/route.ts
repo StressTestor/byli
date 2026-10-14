@@ -28,7 +28,8 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   // Verify cron secret (Vercel sends this header). Constant-time compare.
   const authHeader = req.headers.get('authorization');
-  if (!safeEqual(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret?.trim() || !safeEqual(authHeader, `Bearer ${secret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -47,7 +48,8 @@ export async function GET(req: NextRequest) {
 // POST /api/ingest — manually submit article(s) by tweet ID
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
-  if (!safeEqual(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret?.trim() || !safeEqual(authHeader, `Bearer ${secret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

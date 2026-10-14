@@ -6,8 +6,9 @@
  * Swap in @apollo/client or urql when we need caching/subscriptions.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { appendUniqueArticles, FEED_LOAD_ERROR, readFeedConnection } from '@/lib/feed-client';
 
 const GQL_ENDPOINT = '/api/graphql';
 
@@ -42,8 +43,17 @@ export async function gql<T = any>(
     body: JSON.stringify({ query, variables }),
   });
 
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0].message);
+  // Never render raw proxy responses or database diagnostics in client UI.
+  if (!res.ok) throw new Error('Could not complete the request. Please try again.');
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error('Could not complete the request. Please try again.');
+  }
+  if (!json || typeof json !== 'object' || json.errors?.length || json.data == null) {
+    throw new Error('Could not complete the request. Please try again.');
+  }
   return json.data;
 }
 
@@ -63,16 +73,31 @@ export function useFeed(options: UseFeedOptions = {}) {
   const [error, setError] = useState<string | null>(null);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [endCursor, setEndCursor] = useState<string | null>(null);
+  const requestVersion = useRef(0);
+  const loadedOptions = useRef<string | null>(null);
+  const pending = useRef(false);
+  const optionsKey = JSON.stringify([options.category, options.sort, options.search, options.pageSize]);
+  const currentOptions = useRef(optionsKey);
+  currentOptions.current = optionsKey;
 
   const fetchFeed = useCallback(async (cursor?: string) => {
+    if (cursor && pending.current) return;
+    const version = ++requestVersion.current;
+    const requestedOptions = optionsKey;
+    const isCurrent = () => version === requestVersion.current && requestedOptions === currentOptions.current;
+    pending.current = true;
+    setError(null);
     try {
       if (cursor) {
         setLoadingMore(true);
       } else {
         setLoading(true);
-        setArticles([]);
-        setHasNextPage(false);
-        setEndCursor(null);
+        setLoadingMore(false);
+        if (loadedOptions.current !== requestedOptions) {
+          setArticles([]);
+          setHasNextPage(false);
+          setEndCursor(null);
+        }
         setError(null);
       }
 
@@ -113,40 +138,48 @@ export function useFeed(options: UseFeedOptions = {}) {
         search: options.search || null,
       });
 
-      const newArticles = data.articles.edges.map((e: any) => ({
+      if (!isCurrent()) return;
+      const connection = readFeedConnection(data.articles);
+      const newArticles = connection.edges.map((e) => ({
         ...e.node,
         _score: e.score,
         _cursor: e.cursor,
       }));
 
       if (cursor) {
-        setArticles(prev => [...prev, ...newArticles]);
+        setArticles(prev => appendUniqueArticles(prev, newArticles));
       } else {
         setArticles(newArticles);
       }
 
-      setHasNextPage(data.articles.pageInfo.hasNextPage);
-      setEndCursor(data.articles.pageInfo.endCursor);
+      loadedOptions.current = requestedOptions;
+      setHasNextPage(connection.pageInfo.hasNextPage);
+      setEndCursor(connection.pageInfo.endCursor);
       setError(null);
-    } catch (err: any) {
-      setError(err.message);
-      if (!cursor) {
+    } catch {
+      if (!isCurrent()) return;
+      setError(FEED_LOAD_ERROR);
+      if (!cursor && loadedOptions.current !== requestedOptions) {
         setHasNextPage(false);
         setEndCursor(null);
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (isCurrent()) {
+        pending.current = false;
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }, [options.category, options.sort, options.search, options.pageSize]);
+  }, [options.category, options.sort, options.search, options.pageSize, optionsKey]);
 
   useEffect(() => {
     fetchFeed();
+    return () => { requestVersion.current += 1; pending.current = false; };
   }, [fetchFeed]);
 
   const loadMore = useCallback(() => {
-    if (hasNextPage && endCursor && !loadingMore) fetchFeed(endCursor);
-  }, [hasNextPage, endCursor, loadingMore, fetchFeed]);
+    if (hasNextPage && endCursor && !loading && !loadingMore) fetchFeed(endCursor);
+  }, [hasNextPage, endCursor, loading, loadingMore, fetchFeed]);
 
   return { articles, loading, loadingMore, error, hasNextPage, loadMore, refetch: () => fetchFeed() };
 }
@@ -247,16 +280,26 @@ export function useAuth() {
   const supabase = createBrowserClient();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    let active = true;
+    let authEventReceived = false;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      if (!active) return;
+      authEventReceived = true;
       setUser(session?.user || null);
       setLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+    // A newer sign-out/account-switch event takes precedence over the initial
+    // session lookup, even when that older request finishes later.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active || authEventReceived) return;
       setUser(session?.user || null);
+      setLoading(false);
+    }).catch(() => {
+      if (!active || authEventReceived) return;
+      setUser(null);
+      setLoading(false);
     });
-
-    return () => subscription.unsubscribe();
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {

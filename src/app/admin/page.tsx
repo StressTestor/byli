@@ -1,5 +1,7 @@
 'use client';
 
+import { SubmissionLink } from '@/components/submission-link';
+
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
@@ -158,14 +160,7 @@ function SubmissionQueue() {
           {submissions.map(sub => (
             <div key={sub.id} className="border border-zinc-800 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
               <div className="flex-1 min-w-0">
-                <a
-                  href={sub.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-blue-400 hover:text-blue-300 truncate block"
-                >
-                  {sub.url}
-                </a>
+                <SubmissionLink url={sub.url} className="text-sm text-blue-400 hover:text-blue-300 truncate block" />
                 <div className="flex items-center gap-2 mt-1 text-xs text-zinc-500">
                   {sub.category_label && (
                     <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">{sub.category_label}</span>

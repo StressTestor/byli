@@ -1,5 +1,7 @@
 'use client';
 
+import { SubmissionLink } from '@/components/submission-link';
+
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
@@ -118,9 +120,7 @@ function SidebarSubmissions() {
     <div className="space-y-2">
       {submissions.map(sub => (
         <div key={sub.id} className="border border-zinc-800 rounded-lg p-3">
-          <a href={sub.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:text-blue-300 truncate block">
-            {sub.url}
-          </a>
+          <SubmissionLink url={sub.url} className="text-xs text-blue-400 hover:text-blue-300 truncate block" />
           <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
             {sub.category_label && <span className="px-1 py-0.5 bg-zinc-800 rounded text-zinc-400">{sub.category_label}</span>}
             <span>{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</span>
