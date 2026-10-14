@@ -1,9 +1,13 @@
+import { safeSubmissionUrl } from './submission-input';
+
 // Extract the numeric tweet id from an x.com / twitter.com status URL.
 // Returns null for anything that is not a /status/<id> link on X.
 export function extractTweetId(url: string): string | null {
+  const safeUrl = safeSubmissionUrl(url.trim());
+  if (!safeUrl) return null;
   let parsed: URL;
   try {
-    parsed = new URL(url.trim());
+    parsed = new URL(safeUrl);
   } catch {
     return null;
   }

@@ -16,6 +16,8 @@ const db = vi.hoisted(() => ({
   tables: {} as Record<string, any[]>,
   rpc: {} as Record<string, any[]>,
   calls: [] as { table: string; method: string; args: any[] }[],
+  authCalls: 0,
+  authUserId: '00000000-0000-4000-8000-000000000001' as string | null,
   // Parameter names each RPC accepts. `satisfies` ties them to the generated
   // Args types, so a renamed parameter breaks the type-check, and the mock
   // rejects any name not listed here.
@@ -82,7 +84,10 @@ const USER_ID = '00000000-0000-4000-8000-000000000001';
 vi.mock('@/lib/supabase-server', () => ({
   createSupabaseServer: async () => ({
     auth: {
-      getUser: async () => ({ data: { user: { id: '00000000-0000-4000-8000-000000000001', email: 'u@example.com' } }, error: null }),
+      getUser: async () => {
+        db.authCalls++;
+        return { data: { user: db.authUserId ? { id: db.authUserId, email: 'u@example.com' } : null }, error: null };
+      },
     },
   }),
 }));
@@ -168,6 +173,8 @@ function searchRow(id: string, title: string, published_at: string): SearchRow {
 
 beforeEach(() => {
   db.calls = [];
+  db.authCalls = 0;
+  db.authUserId = USER_ID;
   db.tables = {
     articles: [
       articleWithRelations(ART1, 'First', '2026-02-02T00:00:00Z'),
@@ -457,5 +464,144 @@ describe('depth limit on the server', () => {
   it('lets the introspection query through outside production', async () => {
     const result = await run(getIntrospectionQuery());
     expect(result.errors).toBeUndefined();
+  });
+});
+
+
+describe('submission and profile input boundaries', () => {
+  it.each(['javascript:alert(1)//x.com', 'https://x.com.evil.test/a', 'https://x.com@evil.test/a', 'http://x.com/a'])('rejects unsafe submission before insert: %s', async url => {
+    const result = await run(FE_SUBMIT, { input: { url } });
+    expect(result.errors).toBeDefined();
+    expect(db.calls.some(c => c.method === 'insert')).toBe(false);
+  });
+  it('rejects oversized notes before insert', async () => {
+    const result = await run(FE_SUBMIT, { input: { url: 'https://x.com/i/article/123', notes: 'x'.repeat(2001) } });
+    expect(result.errors).toBeDefined();
+    expect(db.calls.some(c => c.method === 'insert')).toBe(false);
+  });
+  it.each(['', 'a', 'a'.repeat(40), 'user name', '<script>', 'name@x'])('rejects invalid username before update: %s', async username => {
+    const result = await run('mutation($input: UpdateProfileInput!) { updateProfile(input: $input) { id } }', { input: { username } });
+    expect(result.errors).toBeDefined();
+    expect(db.calls.some(c => c.method === 'update')).toBe(false);
+  });
+  it.each(['ab', 'a'.repeat(39), 'User_name-9'])('accepts existing username invariant: %s', async username => {
+    await ok('mutation($input: UpdateProfileInput!) { updateProfile(input: $input) { id } }', { input: { username } });
+    expect(db.calls.find(c => c.method === 'update')?.args[0]).toEqual({ username });
+  });
+});
+
+describe('resource bounds before database execution', () => {
+  it('reports invalid variables as user input errors before database/auth work', async () => {
+    const result = await run('query($n: Int!) { articles(first: $n) { totalCount } }', { n: '50' });
+    expect(result.errors?.[0].extensions?.code).toBe('BAD_USER_INPUT');
+    expect(db.calls).toEqual([]);
+    expect(db.authCalls).toBe(0);
+  });
+
+  it('rejects shallow root alias amplification without any database/auth calls', async () => {
+    const roots = Array.from({ length: 9 }, (_, i) => `a${i}: categories { articleCount }`).join(' ');
+    const result = await run(`{ ${roots} }`);
+    expect(result.errors?.[0].message).toContain('root fields');
+    expect(result.data).toBeUndefined();
+    expect(db.calls).toEqual([]);
+    expect(db.authCalls).toBe(0);
+  });
+
+  it('rechecks variables even when Apollo has cached the validated document', async () => {
+    const query = `query($first: Int!) {
+      articles(first: $first) { edges { node { author { articles(first: $first) { totalCount } } } } }
+    }`;
+    await ok(query, { first: 1 });
+    db.calls = [];
+    const result = await run(query, { first: 50 });
+    expect(result.errors?.[0].message).toContain('resource budget');
+    expect(result.data).toBeUndefined();
+    expect(db.calls).toEqual([]);
+  });
+
+  it('rejects expanded fragments and multiple mutation roots before work', async () => {
+    const fragments = Array.from({ length: 10 }, (_, i) => `fragment F${i} on Article { ...F${i + 1} ...F${i + 1} }`).join('\n');
+    const result = await run(`{ article(id: "${ART1}") { ...F0 } } ${fragments} fragment F10 on Article { id }`);
+    expect(result.errors?.some(error => error.message.includes('expanded fields'))).toBe(true);
+    const mutation = await run(`mutation { a: likeArticle(articleId: "${ART1}") { id } b: unlikeArticle(articleId: "${ART1}") { id } }`);
+    expect(mutation.errors?.[0].message).toContain('root fields');
+    expect(db.calls).toEqual([]);
+    expect(db.authCalls).toBe(0);
+  });
+
+  it('enforces the parser token limit before any resolvers run', async () => {
+    const result = await run(`{ article(id: "${ART1}") { ${'id '.repeat(3_000)} } }`);
+    expect(result.errors?.[0].message).toContain('3000 tokens');
+    expect(db.calls).toEqual([]);
+  });
+});
+
+describe('bounded request-local resolver reads', () => {
+  const viewerQuery = `{
+    articles(first: 2) { edges { node {
+      id viewerHasLiked again: viewerHasLiked viewerHasBookmarked viewerRating
+    } } }
+  }`;
+
+  it('batches viewer state once per table and authenticates once across a page', async () => {
+    const result = await ok(viewerQuery);
+    expect(result.articles.edges[0].node).toMatchObject({ viewerHasLiked: true, again: true, viewerRating: 4 });
+    expect(result.articles.edges[1].node).toMatchObject({ viewerHasLiked: false, viewerHasBookmarked: false, viewerRating: null });
+    expect(db.authCalls).toBe(1);
+    for (const table of ['likes', 'bookmarks', 'ratings']) {
+      expect(db.calls.filter(call => call.table === table && call.method === 'select')).toHaveLength(1);
+      expect(db.calls.find(call => call.table === table && call.method === 'in')?.args).toEqual(['article_id', [ART1, ART2]]);
+    }
+  });
+
+  it('never reuses authenticated viewer state on a later anonymous request', async () => {
+    await ok(viewerQuery);
+    db.authUserId = null;
+    db.calls = [];
+    const result = await ok(viewerQuery);
+    expect(db.authCalls).toBe(2);
+    expect(result.articles.edges[0].node).toMatchObject({ viewerHasLiked: false, again: false, viewerHasBookmarked: false, viewerRating: null });
+    expect(db.calls.some(call => ['likes', 'bookmarks', 'ratings'].includes(call.table))).toBe(false);
+  });
+
+  it('isolates different users and shares root mutation authentication', async () => {
+    await ok(viewerQuery);
+    db.authUserId = '00000000-0000-4000-8000-000000000099';
+    const result = await ok(viewerQuery);
+    expect(result.articles.edges[0].node.viewerHasLiked).toBe(false);
+    expect(db.authCalls).toBe(2);
+    db.authUserId = USER_ID;
+    db.authCalls = 0;
+    await ok(FE_LIKE, { id: ART1 });
+    expect(db.authCalls).toBe(1);
+  });
+
+  it('limits categories and does not count articles unless requested', async () => {
+    await ok('{ categories { id slug } }');
+    expect(db.calls.find(call => call.table === 'categories' && call.method === 'limit')?.args).toEqual([50]);
+    expect(db.calls.some(call => call.table === 'article_categories')).toBe(false);
+  });
+
+  it('counts exactly using one HEAD query per distinct category, beyond the row-transfer cap', async () => {
+    db.tables.article_categories = Array.from({ length: 1_234 }, (_, i) => ({ article_id: `a${i}`, category_id: CAT_ID }));
+    const result = await ok(`{
+      categories { articleCount again: articleCount }
+      article(id: "${ART1}") { categories { articleCount } }
+    }`);
+    expect(result.categories[0]).toEqual({ articleCount: 1_234, again: 1_234 });
+    expect(result.article.categories[0].articleCount).toBe(1_234);
+    const counts = db.calls.filter(call => call.table === 'article_categories' && call.method === 'select');
+    expect(counts).toHaveLength(1);
+    expect(counts[0].args).toEqual(['category_id', { count: 'exact', head: true }]);
+    await ok('{ categories { articleCount } }');
+    expect(db.calls.filter(call => call.table === 'article_categories' && call.method === 'select')).toHaveLength(2);
+  });
+
+  it('bounds submissions and embedded category result lists', async () => {
+    await ok('{ mySubmissions { id } }');
+    expect(db.calls.find(call => call.table === 'submissions' && call.method === 'limit')?.args).toEqual([50]);
+    db.tables.articles[0].categories = Array.from({ length: 60 }, () => ({ category: categoryRow }));
+    const result = await ok(`{ article(id: "${ART1}") { categories { id } } }`);
+    expect(result.article.categories).toHaveLength(50);
   });
 });

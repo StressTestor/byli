@@ -42,7 +42,7 @@ describe('getHomeFeed', () => {
     const page = await getHomeFeed({ pageSize: 2 });
     expect(page.articles.map((a) => a.id)).toEqual(['1']);
     expect(page.hasNextPage).toBe(true);
-    expect(page.endCursor).toBe('2026-01-02T00:00:00Z');
+    expect(Buffer.from(page.endCursor!, 'base64').toString()).toBe('2026-01-02T00:00:00Z');
   });
 });
 

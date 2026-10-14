@@ -1,7 +1,13 @@
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { createSupabaseServer } from '@/lib/supabase-server';
 import { filterBlockedTitles } from '@/lib/title-filter';
+import { getFeedPage, type RawFeedPage } from '@/lib/feed-page';
+import { feedPageSize, FEED_UNAVAILABLE_MESSAGE } from '@/lib/feed-pagination';
+import { safeSubmissionUrl, validSubmissionNotes } from '@/lib/submission-input';
+import { USERNAME_RE } from '@/lib/auth-callback';
 import type { Enums, Tables } from '@/types/supabase';
+import { batchRequest, memoizeRequest, type GraphqlContext } from '@/graphql/request-cache';
+import { MAX_CATEGORY_RESULTS, MAX_SUBMISSION_RESULTS } from '@/graphql/resource-limits';
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -23,7 +29,7 @@ function decodeOffsetCursor(cursor: string): number {
   return Number.isInteger(n) && n >= 0 ? n : 0;
 }
 
-function sortMap(sort: string): string {
+function sortMap(sort: string): import('@/lib/feed-pagination').FeedSort {
   switch (sort) {
     case 'FOR_YOU': return 'FOR_YOU';
     case 'LATEST': return 'LATEST';
@@ -42,14 +48,16 @@ function timeframeFilter(tf: string): string {
   }
 }
 
-async function getAuthUser() {
-  try {
-    const supabase = await createSupabaseServer();
-    const { data: { user } } = await supabase.auth.getUser();
-    return user;
-  } catch {
-    return null;
-  }
+async function getAuthUser(context?: GraphqlContext) {
+  return memoizeRequest(context, 'authUser', async () => {
+    try {
+      const supabase = await createSupabaseServer();
+      const { data: { user } } = await supabase.auth.getUser();
+      return user;
+    } catch {
+      return null;
+    }
+  });
 }
 
 // ─── Query Resolvers ─────────────────────────────────────────
@@ -60,8 +68,7 @@ export const resolvers = {
     articles: async (_: any, args: {
       first?: number; after?: string; category?: string; sort?: string; search?: string;
     }) => {
-      const limit = Math.min(args.first || 20, 50);
-      const cursor = args.after ? decodeCursor(args.after) : null;
+      const limit = feedPageSize(args.first);
       const sortKey = sortMap(args.sort || 'FOR_YOU');
 
       // Search is relevance-ranked, so it pages by offset, not by date.
@@ -72,20 +79,14 @@ export const resolvers = {
           p_limit: limit + 1,
           p_offset: offset,
         });
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(FEED_UNAVAILABLE_MESSAGE);
         return formatOffsetConnection(data || [], limit, offset, transformSearchRow);
       }
 
-      // Use feed function for standard queries
-      const { data, error } = await supabaseAdmin.rpc('get_feed', {
-        p_category_slug: args.category || undefined,
-        p_sort: sortKey,
-        p_limit: limit + 1, // fetch one extra to determine hasNextPage
-        p_cursor: cursor ?? undefined,
+      const page = await getFeedPage({
+        sort: sortKey, category: args.category, after: args.after, first: limit,
       });
-
-      if (error) throw new Error(error.message);
-      return formatFeedConnection(data || [], limit);
+      return formatFeedConnection(page);
     },
 
     // Single article by ID or X Article ID
@@ -146,30 +147,24 @@ export const resolvers = {
     },
 
     // All categories
-    categories: async () => {
-      const { data, error } = await supabaseAdmin
-        .from('categories')
-        .select('*')
-        .order('sort_order', { ascending: true });
+    categories: async (_?: any, _args?: any, context?: GraphqlContext) => {
+      return memoizeRequest(context, 'categories', async () => {
+        const { data, error } = await supabaseAdmin
+          .from('categories')
+          .select('*')
+          .order('sort_order', { ascending: true })
+          .limit(MAX_CATEGORY_RESULTS);
 
-      if (error) throw new Error(error.message);
-
-      // Get article counts per category
-      const { data: counts } = await supabaseAdmin
-        .from('article_categories')
-        .select('category_id');
-
-      const countMap: Record<string, number> = {};
-      (counts || []).forEach((row: any) => {
-        countMap[row.category_id] = (countMap[row.category_id] || 0) + 1;
+        if (error) throw new Error(error.message);
+        // Count lazily with an exact HEAD query only when articleCount is
+        // selected. Never download the entire article_categories table.
+        return (data || []).map(cat => transformCategory(cat));
       });
-
-      return (data || []).map(cat => transformCategory(cat, countMap[cat.id] || 0));
     },
 
     // Current user profile
-    me: async () => {
-      const user = await getAuthUser();
+    me: async (_?: any, _args?: any, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       const { data, error } = await supabaseAdmin
@@ -183,15 +178,16 @@ export const resolvers = {
     },
 
     // User's submissions
-    mySubmissions: async (_: any, args: { status?: string }) => {
-      const user = await getAuthUser();
+    mySubmissions: async (_: any, args: { status?: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       let query = supabaseAdmin
         .from('submissions')
         .select('*, category:categories(*)')
         .eq('submitted_by', user.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(MAX_SUBMISSION_RESULTS);
 
       if (args.status) {
         query = query.eq('status', args.status.toLowerCase() as Enums<'submission_status'>);
@@ -206,8 +202,8 @@ export const resolvers = {
   // ─── Mutations ─────────────────────────────────────────────
 
   Mutation: {
-    likeArticle: async (_: any, args: { articleId: string }) => {
-      const user = await getAuthUser();
+    likeArticle: async (_: any, args: { articleId: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       const { error } = await supabaseAdmin
@@ -218,8 +214,8 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    unlikeArticle: async (_: any, args: { articleId: string }) => {
-      const user = await getAuthUser();
+    unlikeArticle: async (_: any, args: { articleId: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       await supabaseAdmin
@@ -231,8 +227,8 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    bookmarkArticle: async (_: any, args: { articleId: string }) => {
-      const user = await getAuthUser();
+    bookmarkArticle: async (_: any, args: { articleId: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       const { error } = await supabaseAdmin
@@ -243,8 +239,8 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    removeBookmark: async (_: any, args: { articleId: string }) => {
-      const user = await getAuthUser();
+    removeBookmark: async (_: any, args: { articleId: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       await supabaseAdmin
@@ -256,8 +252,8 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    rateArticle: async (_: any, args: { articleId: string; score: number }) => {
-      const user = await getAuthUser();
+    rateArticle: async (_: any, args: { articleId: string; score: number }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
       if (args.score < 1 || args.score > 5) throw new Error('Score must be 1-5');
 
@@ -273,8 +269,8 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    removeRating: async (_: any, args: { articleId: string }) => {
-      const user = await getAuthUser();
+    removeRating: async (_: any, args: { articleId: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       await supabaseAdmin
@@ -286,20 +282,21 @@ export const resolvers = {
       return resolvers.Query.article(_, { id: args.articleId });
     },
 
-    submitArticle: async (_: any, args: { input: { url: string; categoryId?: string; notes?: string } }) => {
-      const user = await getAuthUser();
+    submitArticle: async (_: any, args: { input: { url: string; categoryId?: string; notes?: string } }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
-      // Basic URL validation
-      if (!args.input.url.includes('x.com') && !args.input.url.includes('twitter.com')) {
-        throw new Error('URL must be an X/Twitter article link');
+      const submissionUrl = safeSubmissionUrl(args.input.url.trim());
+      if (!submissionUrl) {
+        throw new Error('URL must be an HTTPS X/Twitter article link');
       }
+      if (!validSubmissionNotes(args.input.notes)) throw new Error('Notes must be 2000 characters or fewer');
 
       const { data, error } = await supabaseAdmin
         .from('submissions')
         .insert({
           submitted_by: user.id,
-          url: args.input.url,
+          url: submissionUrl,
           category_id: args.input.categoryId || null,
           notes: args.input.notes || null,
           status: 'pending',
@@ -311,8 +308,11 @@ export const resolvers = {
       return transformSubmission(data);
     },
 
-    updateProfile: async (_: any, args: { input: { username?: string; avatarUrl?: string } }) => {
-      const user = await getAuthUser();
+    updateProfile: async (_: any, args: { input: { username?: string; avatarUrl?: string } }, context?: GraphqlContext) => {
+      if (args.input.username != null && !USERNAME_RE.test(args.input.username)) {
+        throw new Error('Username must be 2–39 letters, numbers, underscores or hyphens');
+      }
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       const { data, error } = await supabaseAdmin
@@ -329,8 +329,8 @@ export const resolvers = {
       return transformUser(data);
     },
 
-    createApiKey: async (_: any, args: { label?: string }) => {
-      const user = await getAuthUser();
+    createApiKey: async (_: any, args: { label?: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       // Generate key
@@ -356,8 +356,8 @@ export const resolvers = {
       return transformApiKey(data, rawKey);
     },
 
-    revokeApiKey: async (_: any, args: { id: string }) => {
-      const user = await getAuthUser();
+    revokeApiKey: async (_: any, args: { id: string }, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) throw new Error('Not authenticated');
 
       const { error } = await supabaseAdmin
@@ -374,52 +374,61 @@ export const resolvers = {
   // ─── Field Resolvers ──────────────────────────────────────
 
   Article: {
-    viewerHasLiked: async (parent: any) => {
-      const user = await getAuthUser();
+    categories: (parent: any) => (parent.categories || []).slice(0, MAX_CATEGORY_RESULTS),
+    viewerHasLiked: async (parent: any, _args?: any, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) return false;
-      const { data } = await supabaseAdmin
-        .from('likes')
-        .select('user_id')
-        .eq('user_id', user.id)
-        .eq('article_id', parent.id)
-        .maybeSingle();
-      return !!data;
+      return batchRequest(context, 'viewerLikes', parent.id, async (ids) => {
+        const { data, error } = await supabaseAdmin
+          .from('likes')
+          .select('article_id')
+          .eq('user_id', user.id)
+          .in('article_id', ids);
+        if (error) throw new Error(error.message);
+        return new Map((data || []).map(row => [row.article_id, true]));
+      }, false);
     },
-    viewerHasBookmarked: async (parent: any) => {
-      const user = await getAuthUser();
+    viewerHasBookmarked: async (parent: any, _args?: any, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) return false;
-      const { data } = await supabaseAdmin
-        .from('bookmarks')
-        .select('user_id')
-        .eq('user_id', user.id)
-        .eq('article_id', parent.id)
-        .maybeSingle();
-      return !!data;
+      return batchRequest(context, 'viewerBookmarks', parent.id, async (ids) => {
+        const { data, error } = await supabaseAdmin
+          .from('bookmarks')
+          .select('article_id')
+          .eq('user_id', user.id)
+          .in('article_id', ids);
+        if (error) throw new Error(error.message);
+        return new Map((data || []).map(row => [row.article_id, true]));
+      }, false);
     },
-    viewerRating: async (parent: any) => {
-      const user = await getAuthUser();
+    viewerRating: async (parent: any, _args?: any, context?: GraphqlContext) => {
+      const user = await getAuthUser(context);
       if (!user) return null;
-      const { data } = await supabaseAdmin
-        .from('ratings')
-        .select('score')
-        .eq('user_id', user.id)
-        .eq('article_id', parent.id)
-        .maybeSingle();
-      return data?.score || null;
+      return batchRequest<number | null>(context, 'viewerRatings', parent.id, async (ids) => {
+        const { data, error } = await supabaseAdmin
+          .from('ratings')
+          .select('article_id, score')
+          .eq('user_id', user.id)
+          .in('article_id', ids);
+        if (error) throw new Error(error.message);
+        return new Map((data || []).map(row => [row.article_id, row.score]));
+      }, null);
     },
   },
 
   Category: {
-    // categories() precomputes counts for the whole list; categories embedded
-    // in articles and submissions are counted on demand.
-    articleCount: async (parent: { id: string; articleCount?: number }) => {
+    // Exact counts are shared across aliases and repeated category references
+    // in this request, without transferring the junction rows to the app.
+    articleCount: async (parent: { id: string; articleCount?: number }, _args?: any, context?: GraphqlContext) => {
       if (typeof parent.articleCount === 'number') return parent.articleCount;
-      const { count, error } = await supabaseAdmin
-        .from('article_categories')
-        .select('category_id', { count: 'exact', head: true })
-        .eq('category_id', parent.id);
-      if (error) throw new Error(error.message);
-      return count ?? 0;
+      return memoizeRequest(context, `categoryCount:${parent.id}`, async () => {
+        const { count, error } = await supabaseAdmin
+          .from('article_categories')
+          .select('category_id', { count: 'exact', head: true })
+          .eq('category_id', parent.id);
+        if (error) throw new Error(error.message);
+        return count ?? 0;
+      });
     },
   },
 
@@ -563,14 +572,11 @@ function formatConnection(items: any[], limit: number) {
   };
 }
 
-function formatFeedConnection(items: any[], limit: number) {
-  const hasNextPage = items.length > limit;
-  const page = items.slice(0, limit);
-  // Cursor comes from the unfiltered page so hidden items can't stall Load more.
-  const lastRow = page[page.length - 1];
+function formatFeedConnection(feed: RawFeedPage) {
+  const page = feed.rows;
   const edges = filterBlockedTitles(page).map(item => ({
     node: {
-      id: item.id || item.article_id,
+      id: item.id,
       title: item.title,
       excerpt: item.excerpt,
       xUrl: item.x_url,
@@ -580,7 +586,7 @@ function formatFeedConnection(items: any[], limit: number) {
       author: {
         id: item.author_id,
         handle: item.author_handle || item.author_display_name,
-        displayName: item.author_display_name || item.author_name,
+        displayName: item.author_display_name || item.author_handle,
         avatarUrl: item.author_avatar_url ?? null,
         verified: !!item.author_verified,
         claimed: false,
@@ -602,17 +608,17 @@ function formatFeedConnection(items: any[], limit: number) {
       indexedAt: null,
       readTimeMin: item.read_time_min,
     },
-    cursor: encodeCursor(item.published_at),
+    cursor: feed.cursorFor(item),
     score: item.score,
   }));
 
   return {
     edges,
     pageInfo: {
-      hasNextPage,
+      hasNextPage: feed.hasNextPage,
       hasPreviousPage: false,
       startCursor: edges[0]?.cursor || null,
-      endCursor: lastRow ? encodeCursor(lastRow.published_at) : null,
+      endCursor: feed.endCursor,
     },
     totalCount: edges.length,
   };

@@ -15,6 +15,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Apollo loads the CJS GraphQL entry. Use the same instance in tests
+      // that inspect its schema (the package also ships a separate ESM entry).
+      graphql: path.resolve(__dirname, './node_modules/graphql/index.js'),
     },
   },
 });

@@ -8,7 +8,7 @@ vi.mock('@/lib/ingest', () => ({
   sleep: async () => {},
 }));
 
-import { GET, maxDuration } from './route';
+import { GET, POST, maxDuration } from './route';
 
 const stats = { accounts_checked: 2, new_articles: 1 };
 const call = (auth = 'Bearer test-secret') =>
@@ -50,5 +50,22 @@ describe('GET /api/ingest', () => {
     const res = await call();
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ error: 'seed_accounts query failed: boom' });
+  });
+});
+
+
+describe('cron authentication fails closed', () => {
+  it.each([undefined, '', '   '])('rejects absent or empty configured secret (%s) for both methods', async secret => {
+    if (secret === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = secret;
+    for (const handler of [GET, POST]) {
+      for (const authorization of ['Bearer undefined', 'Bearer ', 'Bearer test-secret']) {
+        const response = await handler(new Request('http://localhost/api/ingest', {
+          method: handler === POST ? 'POST' : 'GET', headers: { authorization },
+        }) as any);
+        expect(response.status).toBe(401);
+      }
+    }
+    expect(state.run).not.toHaveBeenCalled();
   });
 });

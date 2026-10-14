@@ -2,6 +2,7 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { safeSubmissionUrl, validSubmissionNotes } from '@/lib/submission-input';
 import type { Category } from '@/types/database';
 
 interface SubmitArticleModalProps {
@@ -40,33 +41,40 @@ export function SubmitArticleModal({ onClose }: SubmitArticleModalProps) {
 
   const handleArticleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!url.trim()) {
-      setError('Please enter a URL.');
+    const submissionUrl = safeSubmissionUrl(url.trim());
+    if (!submissionUrl) {
+      setError('Please enter an HTTPS X/Twitter article URL.');
       return;
     }
 
+    if (!validSubmissionNotes(notes)) {
+      setError('Notes must be 2000 characters or fewer.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
-
-    const { error: insertError } = await supabase.from('submissions').insert({
-      url: url.trim(),
-      category_id: categoryId || null,
-      notes: notes.trim() || null,
-      status: 'pending',
-      submitted_by: (await supabase.auth.getUser()).data.user!.id,
-      article_id: null,
-      reviewed_by: null,
-      reviewed_at: null,
-    } as any);
-
-    if (insertError) {
-      setError(insertError.message);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError('Please sign in to submit an article.');
+        return;
+      }
+      const { error: insertError } = await supabase.from('submissions').insert({
+        url: submissionUrl,
+        category_id: categoryId || null,
+        notes: notes.trim() || null,
+        submitted_by: user.id,
+      });
+      if (insertError) {
+        setError('Could not submit this article. Please try again.');
+        return;
+      }
+      setSuccess(true);
+    } catch {
+      setError('Could not submit this article. Please try again.');
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    setSuccess(true);
-    setSubmitting(false);
   };
 
   const handleHandleSubmit = async (e: FormEvent) => {
@@ -200,6 +208,7 @@ export function SubmitArticleModal({ onClose }: SubmitArticleModalProps) {
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                   rows={3}
+                  maxLength={2000}
                   className="w-full px-3 py-2.5 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors resize-none"
                 />
               </div>

@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { gql, useAuth } from '@/hooks/api';
 import { FeedWithAds, NativeAd } from '@/components/ads/monetag';
 import { ArticleCard } from './article-card';
 import type { FeedArticle, FeedSort } from '@/lib/home-feed';
+import { appendUniqueArticles, FEED_LOAD_ERROR, readFeedConnection } from '@/lib/feed-client';
 
 // In-feed native ad, styled to sit among the cards. Renders nothing unless
 // ads are enabled (FeedWithAds short-circuits when disabled).
@@ -84,6 +85,11 @@ export function HomeFeed({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
+  const filterPending = useRef(false);
+  const morePending = useRef(false);
+  const shownFilter = useRef<{ category: string | null; sort: FeedSort }>({ category: null, sort: 'POPULAR' });
+  const [failedFilter, setFailedFilter] = useState<{ category: string | null; sort: FeedSort } | null>(null);
 
   const fetchPage = useCallback(
     async (opts: { category: string | null; sort: FeedSort; after?: string | null }) => {
@@ -93,48 +99,73 @@ export function HomeFeed({
         category: opts.category,
         sort: opts.sort,
       });
-      return data.articles as { edges: { node: any }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+      return readFeedConnection(data.articles);
     },
     []
   );
 
   const applyFilter = useCallback(
     async (nextCategory: string | null, nextSort: FeedSort) => {
+      const version = ++requestVersion.current;
+      filterPending.current = true;
+      morePending.current = false;
+      setLoadingMore(false);
       setCategory(nextCategory);
       setSort(nextSort);
       setLoading(true);
       setError(null);
+      setFailedFilter(null);
       try {
         const conn = await fetchPage({ category: nextCategory, sort: nextSort });
-        setArticles(conn.edges.map((e) => mapNode(e.node)));
+        if (version !== requestVersion.current) return;
+        setArticles(appendUniqueArticles([], conn.edges.map((e) => mapNode(e.node))));
         setHasNext(conn.pageInfo.hasNextPage);
         setCursor(conn.pageInfo.endCursor);
-      } catch (e: any) {
-        setError(e.message || 'Something went wrong');
+        shownFilter.current = { category: nextCategory, sort: nextSort };
+      } catch {
+        if (version !== requestVersion.current) return;
+        // Retain the previously loaded cards and their matching cursor/scope.
+        setCategory(shownFilter.current.category);
+        setSort(shownFilter.current.sort);
+        setFailedFilter({ category: nextCategory, sort: nextSort });
+        setError(FEED_LOAD_ERROR);
       } finally {
-        setLoading(false);
+        if (version === requestVersion.current) {
+          filterPending.current = false;
+          setLoading(false);
+        }
       }
     },
     [fetchPage]
   );
 
   const loadMore = useCallback(async () => {
-    if (!hasNext || !cursor || loadingMore) return;
+    // The ref closes the gap before React commits state on repeated clicks.
+    if (!hasNext || !cursor || morePending.current || filterPending.current) return;
+    const version = requestVersion.current;
+    morePending.current = true;
     setLoadingMore(true);
+    setError(null);
+    setFailedFilter(null);
     try {
       const conn = await fetchPage({ category, sort, after: cursor });
-      setArticles((prev) => [...prev, ...conn.edges.map((e) => mapNode(e.node))]);
+      if (version !== requestVersion.current) return;
+      // Engagement can change between page requests; don't duplicate cards.
+      setArticles((prev) => appendUniqueArticles(prev, conn.edges.map((e) => mapNode(e.node))));
       setHasNext(conn.pageInfo.hasNextPage);
       setCursor(conn.pageInfo.endCursor);
-    } catch (e: any) {
-      setError(e.message || 'Something went wrong');
+    } catch {
+      if (version === requestVersion.current) setError(FEED_LOAD_ERROR);
     } finally {
-      setLoadingMore(false);
+      if (version === requestVersion.current) {
+        morePending.current = false;
+        setLoadingMore(false);
+      }
     }
-  }, [hasNext, cursor, loadingMore, category, sort, fetchPage]);
+  }, [hasNext, cursor, category, sort, fetchPage]);
 
   return (
-    <div>
+    <div aria-busy={loading}>
       {/* Controls */}
       <div className="mb-5 space-y-3">
         <div className="no-scrollbar flex gap-1 overflow-x-auto pb-1">
@@ -183,8 +214,22 @@ export function HomeFeed({
         </div>
       </div>
 
-      {/* List */}
-      {loading ? (
+      {error && (
+        <div role="alert" className="mb-4 rounded-xl border border-zinc-800/60 p-4 text-sm text-zinc-400">
+          <p>{error}</p>
+          {failedFilter && (
+            <button
+              onClick={() => applyFilter(failedFilter.category, failedFilter.sort)}
+              className="mt-2 font-medium text-accent"
+            >
+              Retry filter
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Existing cards stay mounted during requests and recoverable errors. */}
+      {loading && articles.length === 0 ? (
         <div className="flex flex-col gap-3">
           {[0, 1, 2, 3, 4].map((i) => (
             <div key={i} className="rounded-xl border border-zinc-800/40 p-5">
@@ -197,12 +242,7 @@ export function HomeFeed({
             </div>
           ))}
         </div>
-      ) : error ? (
-        <div className="py-16 text-center">
-          <h3 className="mb-1 text-lg font-medium text-zinc-300">Something went wrong</h3>
-          <p className="text-sm text-zinc-500">{error}</p>
-        </div>
-      ) : articles.length === 0 ? (
+      ) : articles.length === 0 && !error ? (
         <div className="py-16 text-center">
           <h3 className="mb-1 font-display text-lg font-medium text-zinc-300">No articles yet</h3>
           <p className="text-sm text-zinc-500">Check back soon, or try a different category.</p>
@@ -222,7 +262,7 @@ export function HomeFeed({
           disabled={loadingMore}
           className="mt-6 w-full rounded-xl border border-zinc-800/60 py-3 text-sm text-zinc-400 transition-all hover:border-zinc-600 hover:bg-zinc-900/30 disabled:opacity-50"
         >
-          {loadingMore ? 'Loading…' : 'Load more'}
+          {loadingMore ? 'Loading…' : error && !failedFilter ? 'Retry load more' : 'Load more'}
         </button>
       )}
     </div>
