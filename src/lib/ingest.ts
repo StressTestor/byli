@@ -18,7 +18,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/supabase-admin';
-import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from '@/lib/ingest-utils';
+import { classifyArticle, estimateReadTime, isEnglishLike, usableArticleBody, articleTeaser } from '@/lib/ingest-utils';
 import { isBlockedTitle } from '@/lib/title-filter';
 import { runWithConcurrency } from '@/lib/concurrency';
 import { sourceRefreshPatch, type RefreshableArticle } from './article-source-refresh';
@@ -64,7 +64,7 @@ interface ArticleContent {
   title: string;
   preview_text: string;
   cover_media_img_url?: string;
-  contents: Array<{ text: string }>;
+  contents?: Array<{ text?: string }>;
 }
 
 interface TimelineTweet {
@@ -360,7 +360,6 @@ interface ProcessArticleInput {
   article: ArticleContent;
   author: AuthorInfo;
   publishedAt: string;
-  fallbackText: string;
   stats: {
     likeCount: number;
     bookmarkCount: number;
@@ -384,19 +383,16 @@ export interface IngestOutcome {
 const UNIQUE_VIOLATION = '23505';
 
 async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome> {
-  const { tweetId, tweetUrl, article, author: authorSource, publishedAt, fallbackText, stats, catMap } = input;
+  const { tweetId, tweetUrl, article, author: authorSource, publishedAt, stats, catMap } = input;
 
   // Blocklisted titles are dropped before any database write.
   if (isBlockedTitle(article.title)) return { ok: false, blocked: true, error: 'blocked title' };
 
-  const fullText = article.contents
-    ? article.contents.map(c => c.text).join('\n\n')
-    : fallbackText;
-  const cleanText = stripHtml(fullText);
-  const excerpt = article.preview_text || cleanText.slice(0, 300);
-  const bodyPreview = cleanText.slice(0, 500);
+  const cleanText = usableArticleBody(article.contents, article.preview_text || '');
+  const excerpt = articleTeaser(article.preview_text, cleanText);
+  const bodyPreview = cleanText?.slice(0, 500) || null;
   const coverImage = article.cover_media_img_url || null;
-  const readTime = estimateReadTime(cleanText);
+  const readTime = cleanText ? estimateReadTime(cleanText) : null;
 
   // Upsert author
   const { data: author, error: authorErr } = await supabaseAdmin
@@ -419,7 +415,7 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
   }
 
   // Classify
-  const categorySlugs = classifyArticle(article.title, excerpt);
+  const categorySlugs = classifyArticle(article.title, excerpt || '');
 
   // Insert article
   const { data: newArticle, error: articleErr } = await supabaseAdmin
@@ -614,7 +610,6 @@ async function ingestArticleTweet(
     article: tweet.article,
     author: tweet.author,
     publishedAt: tweet.createdAt,
-    fallbackText: tweet.text,
     stats: {
       likeCount: tweet.likeCount ?? 0,
       bookmarkCount: tweet.bookmarkCount ?? 0,
@@ -850,7 +845,6 @@ export async function ingestSingleArticle(tweetId: string): Promise<IngestOutcom
       article,
       author: article.author,
       publishedAt: article.createdAt,
-      fallbackText: '',
       stats: {
         likeCount: article.likeCount ?? 0,
         bookmarkCount: 0,
