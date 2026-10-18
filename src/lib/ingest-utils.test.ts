@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike } from './ingest-utils';
+import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike, usableArticleBody, articleTeaser } from './ingest-utils';
+
+describe('article body and teaser', () => {
+  it('rejects link-only and shorter-than-teaser blocks', () => {
+    expect(usableArticleBody([{ text: 'https://t.co/short' }], 'Teaser')).toBeNull();
+    expect(usableArticleBody([{ text: 'A complete sentence with enough words to pass a length check. '.repeat(2) }],
+      'A much longer teaser. '.repeat(10))).toBeNull();
+  });
+
+  it('never uses a short link as the teaser fallback', () => {
+    expect(articleTeaser('https://t.co/short', null)).toBeNull();
+    expect(articleTeaser('', 'A full article body')).toBe('A full article body');
+  });
+});
 
 // ─── stripHtml ──────────────────────────────────────────────────────
 

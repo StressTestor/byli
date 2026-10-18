@@ -1,4 +1,4 @@
-import { stripHtml, estimateReadTime } from './ingest-utils';
+import { usableArticleBody, articleTeaser, estimateReadTime } from './ingest-utils';
 import { isBlockedTitle } from './title-filter';
 import { extractTweetId } from './tweet-id';
 
@@ -25,7 +25,7 @@ export interface RefreshableArticle {
 
 export function sourceRefreshPatch(row: RefreshableArticle, input: {
   tweetId: string; tweetUrl: string; authorId: string;
-  article: { title: string; preview_text: string; contents: Array<{ text: string }> };
+  article: { title: string; preview_text: string; contents?: Array<{ text?: string }> };
 }) {
   if (row.source !== 'twitterapi' || row.status !== 'published' || row.featured !== false ||
       !row.indexed_at || !row.updated_at || row.indexed_at !== row.updated_at ||
@@ -37,21 +37,18 @@ export function sourceRefreshPatch(row: RefreshableArticle, input: {
   const article = input.article;
   if (typeof article?.title !== 'string' || !article.title.trim() || article.title.length > 1000 ||
       isBlockedTitle(article.title) || typeof article.preview_text !== 'string' ||
-      !Array.isArray(article.contents) || article.contents.length === 0 || article.contents.length > 10000 ||
-      article.contents.some(part => typeof part?.text !== 'string')) return null;
-  const raw = article.contents.map(part => part.text).join('\n\n');
-  if (raw.length > 1_000_000) return null;
-  const text = stripHtml(raw).trim();
+      !Array.isArray(article.contents)) return null;
+  const text = usableArticleBody(article.contents, article.preview_text);
   // Do not replace a stored preview with an empty, obviously cut off, or shorter
   // response. Upstream payload completeness cannot be proven without a version API.
-  if (text.length < 80 || text.length < (row.body_preview?.length ?? 0) ||
-      /(?:\.\.\.|…)\s*$/.test(text) || /(?:\.\.\.|…)\s*$/.test(article.title) ||
+  if (!text || text.length < (row.body_preview?.length ?? 0) ||
+      /(?:\.\.\.|…)\s*$/.test(article.title) ||
       /^(?:error|unavailable|not found|access denied|deleted)\b/i.test(article.title.trim())) return null;
   const readTime = estimateReadTime(text);
   if (row.read_time_min != null && readTime < row.read_time_min) return null;
   const patch = {
     title: article.title,
-    excerpt: article.preview_text.trim() || text.slice(0, 300),
+    excerpt: articleTeaser(article.preview_text, text)!,
     body_preview: text.slice(0, 500),
     read_time_min: readTime,
   };

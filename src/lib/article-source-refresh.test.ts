@@ -39,6 +39,7 @@ describe('conservative first source refresh', () => {
     { contents: [{ text: 'a'.repeat(100) + '...' }] },
     { contents: [{ text: '<p> </p>' }] }, { contents: [{ text: 'a'.repeat(1_000_001) }] },
     { contents: [{ text: null }] }, { contents: null }, { preview_text: null },
+    { contents: [{ text: 'https://t.co/short' }] },
   ])('rejects incomplete or invalid response %j', changes => {
     expect(sourceRefreshPatch(row, { ...input, article: { ...input.article, ...changes } as any })).toBeNull();
   });
@@ -46,6 +47,11 @@ describe('conservative first source refresh', () => {
     expect(sourceRefreshPatch({ ...row, body_preview: 'x'.repeat(500) }, {
       ...input, article: { ...input.article, contents: [{ text: 'x'.repeat(100) }] },
     })).toBeNull();
+  });
+  it('allows documented image blocks alongside substantive text blocks', () => {
+    expect(sourceRefreshPatch(row, { ...input, article: { ...input.article,
+      contents: [{ text: undefined }, ...input.article.contents],
+    } })?.body_preview).toBe(input.article.contents[0].text.trim().slice(0, 500));
   });
   it('rejects an unmarked partial body that would reduce the stored reading time', () => {
     expect(sourceRefreshPatch({ ...row, body_preview: 'x'.repeat(500), read_time_min: 10 }, {

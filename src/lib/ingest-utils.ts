@@ -46,6 +46,29 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
+// Timeline/search results can identify an Article while carrying only the
+// sharing tweet's short link (or no body blocks at all). Keep the teaser, but
+// never present that link as an article body or derive a reading time from it.
+export function usableArticleBody(contents: unknown, previewText: unknown): string | null {
+  if (!Array.isArray(contents) || contents.length === 0 || contents.length > 10000 ||
+      contents.some(part => !part || (part.text !== undefined && typeof part.text !== 'string'))) return null;
+
+  const raw = contents.map(part => typeof part.text === 'string' ? part.text : '').join('\n\n');
+  if (raw.length > 1_000_000) return null;
+  const text = stripHtml(raw);
+  const prose = text.replace(/https?:\/\/\S+/gi, ' ').trim();
+  const previewLength = typeof previewText === 'string' ? stripHtml(previewText).length : 0;
+  if (prose.length < 80 || prose.split(/\s+/).length < 12 ||
+      text.length < previewLength || /(?:\.\.\.|…)\s*$/.test(text)) return null;
+  return text;
+}
+
+export function articleTeaser(previewText: unknown, body: string | null): string | null {
+  const preview = typeof previewText === 'string' ? stripHtml(previewText) : '';
+  if (preview && !/^https?:\/\/\S+$/i.test(preview)) return preview;
+  return body?.slice(0, 300) || null;
+}
+
 export function estimateReadTime(text: string): number {
   const wordCount = text.split(/\s+/).length;
   return Math.max(Math.ceil(wordCount / 250), 2);

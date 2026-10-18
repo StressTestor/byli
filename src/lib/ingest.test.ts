@@ -204,6 +204,39 @@ describe('ingestSingleArticle', () => {
   });
 });
 
+describe('article content quality at insertion', () => {
+  beforeEach(() => {
+    seeds = { data: [{ handle: 'alice', high_yield: false }], error: null };
+  });
+
+  it.each([
+    { contents: undefined, text: 'https://t.co/short' },
+    { contents: [{ text: 'https://t.co/short' }], text: 'Read my article https://t.co/short' },
+    { contents: [{ text: 'A partial sentence.' }], text: 'https://t.co/short' },
+  ])('keeps the source teaser but does not save an unusable body', ({ contents, text }) => {
+    routes.timeline = () => json({ status: 'success', data: { tweets: [{
+      ...articleTweet('42'), text, article: { title: 'A fine article', preview_text: 'An intentional X teaser.', contents },
+    }] } });
+    return ingestArticles(fast).then(result => {
+      expect(result.new_articles).toBe(1);
+      expect(db.calls.find(q => q.table === 'articles' && q.op === 'insert')?.payload)
+        .toMatchObject({ excerpt: 'An intentional X teaser.', body_preview: null, read_time_min: null });
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/article?'))).toBe(false);
+    });
+  });
+
+  it('uses the article blocks for a substantive body and keeps the 500-character display cap', async () => {
+    const body = 'A complete article paragraph with useful information. '.repeat(20);
+    routes.timeline = () => json({ status: 'success', data: { tweets: [{
+      ...articleTweet('42'), article: { title: 'A fine article', preview_text: 'The X teaser.',
+        contents: [{ type: 'image', url: 'https://example.com/image.jpg' }, { type: 'unstyled', text: body }] },
+    }] } });
+    await ingestArticles(fast);
+    expect(db.calls.find(q => q.table === 'articles' && q.op === 'insert')?.payload)
+      .toMatchObject({ excerpt: 'The X teaser.', body_preview: body.slice(0, 500), read_time_min: 2 });
+  });
+});
+
 describe('seed account loading', () => {
   it('fails the run on a Supabase error instead of using the fallback list', async () => {
     seeds = { data: null, error: { message: 'permission denied for table seed_accounts', code: '42501' } };
