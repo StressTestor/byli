@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { visibleArticleBodyPreview } from '@/lib/ingest-utils';
 import type { Article, Author, Category, ArticleStats } from '@/types/database';
 import { serializeJsonLd } from './json-ld';
 import { getRelatedArticles } from './related-articles';
@@ -30,7 +31,8 @@ async function getArticle(id: string): Promise<ArticleRow | null> {
     .single();
 
   if (error || !data) return null;
-  return data as unknown as ArticleRow;
+  const row = data as unknown as ArticleRow;
+  return { ...row, body_preview: visibleArticleBodyPreview(row.body_preview) };
 }
 
 // ─── Helpers ────────────────────────────────────────────────

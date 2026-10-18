@@ -1,4 +1,4 @@
-// Pure utility functions for the ingest route.
+// Pure article and ingest utility functions.
 // Extracted so they can be tested without Supabase side effects.
 
 // ─── Category Classifier (v1: keyword matching) ─────────────────────
@@ -61,6 +61,21 @@ export function usableArticleBody(contents: unknown, previewText: unknown): stri
   if (prose.length < 80 || prose.split(/\s+/).length < 12 ||
       text.length < previewLength || /(?:\.\.\.|…)\s*$/.test(text)) return null;
   return text;
+}
+
+// Read-time guard for older rows that were saved before body validation. Keep
+// this narrow: short prose, including prose with a link, remains visible.
+export function isLinkOnlyArticleText(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const words = stripHtml(value).split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every(word => {
+    const unwrapped = word.replace(/^[([{"'“‘]+|[)\]}"'”’.,;:!?]+$/g, '');
+    return /^(?:https?:\/\/|www\.|t\.co\/)\S+$/i.test(unwrapped);
+  });
+}
+
+export function visibleArticleBodyPreview(body: string | null): string | null {
+  return body && !isLinkOnlyArticleText(body) ? body : null;
 }
 
 export function articleTeaser(previewText: unknown, body: string | null): string | null {

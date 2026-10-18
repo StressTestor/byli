@@ -324,6 +324,18 @@ describe('resolved values map from snake_case rows', () => {
     });
   });
 
+  it('omits a stored link-only body but preserves its teaser and other fields', async () => {
+    db.tables.articles[0].body_preview = 'https://t.co/short';
+    const first = (await ok(OPS.article, { id: ART1 })).article;
+    expect(first).toMatchObject({ excerpt: 'excerpt', bodyPreview: null, readTimeMin: 5,
+      xUrl: `https://x.com/i/article/${ART1}` });
+    expect(db.tables.articles[0].body_preview).toBe('https://t.co/short');
+
+    db.tables.articles[0].body_preview = 'Read the full piece at https://t.co/short';
+    const second = (await ok(OPS.article, { id: ART1 })).article;
+    expect(second.bodyPreview).toBe('Read the full piece at https://t.co/short');
+  });
+
   it('categories carry articleCount and no raw columns', async () => {
     const data = await ok(OPS.categories);
     expect(data.categories).toEqual([{ id: CAT_ID, slug: 'ai', label: 'AI', icon: 'cpu', articleCount: 2 }]);

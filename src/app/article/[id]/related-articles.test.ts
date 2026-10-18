@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 const { from } = vi.hoisted(() => ({ from: vi.fn() }));
 vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { from } }));
 
-import ArticlePage from './page';
+import ArticlePage, { generateMetadata } from './page';
 import { getRelatedArticles } from './related-articles';
 
 interface TestArticle {
@@ -193,6 +193,29 @@ describe('getRelatedArticles', () => {
 });
 
 describe('article page recommendations', () => {
+  it('shows the provider teaser while hiding a stored link-only body from page and metadata', async () => {
+    rows = [article('current', { excerpt: 'The provider teaser.', body_preview: 'https://t.co/short' })];
+
+    const html = renderToStaticMarkup(await ArticlePage({ params: Promise.resolve({ id: 'current' }) }));
+    const metadata = await generateMetadata({ params: Promise.resolve({ id: 'current' }) });
+
+    expect(html).toContain('The provider teaser.');
+    expect(html).not.toContain('https://t.co/short');
+    expect(metadata.description).toBe('The provider teaser.');
+    expect(metadata.openGraph).toMatchObject({ description: 'The provider teaser.' });
+    expect(rows[0].body_preview).toBe('https://t.co/short');
+  });
+
+  it('preserves a legitimate short body when no teaser exists', async () => {
+    rows = [article('current', { excerpt: null, body_preview: 'A brief but complete note.' })];
+
+    const html = renderToStaticMarkup(await ArticlePage({ params: Promise.resolve({ id: 'current' }) }));
+    const metadata = await generateMetadata({ params: Promise.resolve({ id: 'current' }) });
+
+    expect(html).toContain('A brief but complete note.');
+    expect(metadata.description).toBe('A brief but complete note.');
+  });
+
   it('renders the existing author heading and only eligible article links', async () => {
     rows = [
       article('current'),
