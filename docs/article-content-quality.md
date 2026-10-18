@@ -37,3 +37,11 @@ article blocks. Otherwise prepare a per-row correction for review, using an
 exact ID, source identity, and old-value predicates so any concurrent edit
 causes a no-op. Do not bulk replace content or infer the full article body
 from the short link.
+
+Until a row receives a verified repair, article-page rendering and GraphQL
+read normalization omit a `body_preview` made entirely of URL tokens. The
+stored value, timestamps, reading time, provider teaser, and source link are
+unchanged, so the conservative first-refresh conditions remain available.
+Short prose and prose containing a link remain visible. This is a display
+guard for known link-only records, not a claim that other promotional or
+incomplete text is a complete article body.

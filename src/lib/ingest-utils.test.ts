@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike, usableArticleBody, articleTeaser } from './ingest-utils';
+import { classifyArticle, stripHtml, estimateReadTime, isEnglishLike, usableArticleBody, articleTeaser,
+  isLinkOnlyArticleText, visibleArticleBodyPreview } from './ingest-utils';
 
 describe('article body and teaser', () => {
   it('rejects link-only and shorter-than-teaser blocks', () => {
@@ -11,6 +12,32 @@ describe('article body and teaser', () => {
   it('never uses a short link as the teaser fallback', () => {
     expect(articleTeaser('https://t.co/short', null)).toBeNull();
     expect(articleTeaser('', 'A full article body')).toBe('A full article body');
+  });
+});
+
+describe('existing article body previews', () => {
+  it.each([
+    'https://t.co/short',
+    '  (https://t.co/short).  ',
+    'https://t.co/one\nhttps://x.com/i/article/two',
+    '<p>https://t.co/short</p>',
+  ])('hides link-only text %j', body => {
+    expect(isLinkOnlyArticleText(body)).toBe(true);
+    expect(visibleArticleBodyPreview(body)).toBeNull();
+  });
+
+  it.each([
+    'A brief but complete note.',
+    'Read the full piece at https://t.co/short',
+    'https://t.co/short is the source link.',
+  ])('preserves short prose %j', body => {
+    expect(isLinkOnlyArticleText(body)).toBe(false);
+    expect(visibleArticleBodyPreview(body)).toBe(body);
+  });
+
+  it('does not create a preview from missing content', () => {
+    expect(visibleArticleBodyPreview(null)).toBeNull();
+    expect(isLinkOnlyArticleText('')).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ import { filterBlockedTitles } from '@/lib/title-filter';
 import { getFeedPage, type RawFeedPage } from '@/lib/feed-page';
 import { feedPageSize, FEED_UNAVAILABLE_MESSAGE } from '@/lib/feed-pagination';
 import { safeSubmissionUrl, validSubmissionNotes } from '@/lib/submission-input';
+import { visibleArticleBodyPreview } from '@/lib/ingest-utils';
 import { USERNAME_RE } from '@/lib/auth-callback';
 import type { Enums, Tables } from '@/types/supabase';
 import { batchRequest, memoizeRequest, type GraphqlContext } from '@/graphql/request-cache';
@@ -468,7 +469,7 @@ function transformArticle(raw: any): any {
     xUrl: raw.x_url,
     title: raw.title,
     excerpt: raw.excerpt,
-    bodyPreview: raw.body_preview,
+    bodyPreview: visibleArticleBodyPreview(raw.body_preview),
     author: raw.author ? transformAuthor(raw.author) : null,
     categories: (raw.categories || []).map((ac: any) => transformCategory(ac.category || ac)),
     stats: raw.stats ? {
