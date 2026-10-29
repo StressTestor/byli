@@ -322,7 +322,7 @@ function SiteSettings() {
     if (data) {
       const map: Record<string, boolean> = {};
       (data as any[]).forEach(s => {
-        map[s.key] = s.value === 'true' || s.value === '1';
+        map[s.key] = s.value === true || s.value === 'true' || s.value === '1';
       });
       setSettings(map);
     }

@@ -16,9 +16,10 @@ interface FieldProps {
   name?: string;
   required?: boolean;
   minLength?: number;
+  uncontrolled?: boolean;
 }
 
-export function Field({ label, icon, type = 'text', placeholder, value, onChange, error, autoComplete, name, required, minLength }: FieldProps) {
+export function Field({ label, icon, type = 'text', placeholder, value, onChange, error, autoComplete, name, required, minLength, uncontrolled = false }: FieldProps) {
   const [show, setShow] = useState(false);
   const isPw = type === 'password';
 
@@ -32,8 +33,9 @@ export function Field({ label, icon, type = 'text', placeholder, value, onChange
           className={`field-input ${error ? 'err' : ''}`}
           type={isPw && show ? 'text' : type}
           placeholder={placeholder}
-          value={value}
+          value={uncontrolled ? undefined : value}
           onChange={e => onChange(e.target.value)}
+          onInput={uncontrolled ? e => onChange(e.currentTarget.value) : undefined}
           autoComplete={autoComplete || (isPw ? 'current-password' : type === 'email' ? 'email' : 'off')}
           name={inferredName}
           required={required}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useRef, useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
@@ -19,37 +19,49 @@ export default function SignupPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (submitting.current) return;
+
+    // Password managers can populate native inputs without updating React state.
+    // Read the submitted values rather than a possibly stale render snapshot.
+    const form = new FormData(e.currentTarget);
+    const username = String(form.get('username') ?? '');
+    const email = String(form.get('email') ?? '');
+    const password = String(form.get('password') ?? '');
+    setUsername(username);
+    setEmail(email);
+    setPassword(password);
     if (!username || !email || !password) { setError('All fields are required.'); return; }
     if (username.length < 3) { setError('Username must be at least 3 characters.'); return; }
     if (!USERNAME_RE.test(username)) { setError('Usernames can use letters, numbers, _ and -, up to 39 characters.'); return; }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
 
+    submitting.current = true;
     setLoading(true);
     setError(null);
-
-    // 1. Create auth user
-    const { error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/confirm`,
-        data: { username }, // handle_new_user() copies this into profiles.username
-      },
-    });
-
-    if (authError) {
-      setError(authError.message);
+    try {
+      const { error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          data: { username }, // handle_new_user() copies this into profiles.username
+        },
+      });
+      if (authError) {
+        setError(authError.message);
+        return;
+      }
+      router.push(`/auth/confirm?email=${encodeURIComponent(email)}&type=signup`);
+    } catch {
+      setError('Could not create your account. Please try again.');
+    } finally {
+      submitting.current = false;
       setLoading(false);
-      return;
     }
-
-    setLoading(false);
-
-    // Supabase sends confirmation email — show verify screen
-    router.push(`/auth/confirm?email=${encodeURIComponent(email)}&type=signup`);
   };
 
   const handleGitHubAuth = async () => {
@@ -77,6 +89,7 @@ export default function SignupPage() {
 
       <form onSubmit={handleSubmit}>
         <Field
+          uncontrolled
           label="Username"
           icon={<UserIcon />}
           placeholder="Choose a username"
@@ -88,6 +101,7 @@ export default function SignupPage() {
           minLength={3}
         />
         <Field
+          uncontrolled
           label="Email"
           icon={<MailIcon />}
           type="email"
@@ -98,6 +112,7 @@ export default function SignupPage() {
           required
         />
         <Field
+          uncontrolled
           label="Password"
           icon={<LockIcon />}
           type="password"
