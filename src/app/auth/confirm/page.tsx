@@ -2,13 +2,47 @@
 
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Suspense } from 'react';
-import { AuthLayout, CheckIcon } from '@/components/auth/shared';
+import { Suspense, useRef, useState } from 'react';
+import { createBrowserClient } from '@/lib/supabase-browser';
+import { AuthLayout, CheckIcon, AuthMessage } from '@/components/auth/shared';
 
 function ConfirmContent() {
   const params = useSearchParams();
   const email = params.get('email') || '';
   const type = params.get('type') || 'signup';
+  const inFlight = useRef(false);
+  const [sending, setSending] = useState(false);
+  const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  const resendEmail = async () => {
+    if (inFlight.current) return;
+    if (!email.trim()) {
+      setMessage({ type: 'error', text: 'Return to login or signup and enter your email address first.' });
+      return;
+    }
+    if (type !== 'signup' && type !== 'reset') {
+      setMessage({ type: 'error', text: 'Unknown email request. Please return to login.' });
+      return;
+    }
+    inFlight.current = true;
+    setSending(true);
+    setMessage(null);
+    try {
+      const supabase = createBrowserClient();
+      const redirectTo = `${window.location.origin}/auth/confirm`;
+      const { error } = type === 'reset'
+        ? await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo })
+        : await supabase.auth.resend({ type: 'signup', email: email.trim(), options: { emailRedirectTo: redirectTo } });
+      setMessage(error
+        ? { type: 'error', text: error.message }
+        : { type: 'success', text: 'Email requested. Check your inbox and spam folder.' });
+    } catch {
+      setMessage({ type: 'error', text: 'Could not resend the email. Please try again.' });
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
+  };
 
   return (
     <AuthLayout>
@@ -37,8 +71,11 @@ function ConfirmContent() {
 
       <div className="auth-footer" style={{ marginTop: 20 }}>
         Didn't receive it?{' '}
-        <button className="auth-link accent">Resend email</button>
+        <button type="button" className="auth-link accent" onClick={resendEmail} disabled={sending}>
+          {sending ? 'Sending…' : 'Resend email'}
+        </button>
       </div>
+      {message && <AuthMessage type={message.type}>{message.text}</AuthMessage>}
     </AuthLayout>
   );
 }
