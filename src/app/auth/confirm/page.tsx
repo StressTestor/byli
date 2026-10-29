@@ -32,7 +32,7 @@ function ConfirmContent() {
       const redirectTo = `${window.location.origin}/auth/confirm`;
       const { error } = type === 'reset'
         ? await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo })
-        : await supabase.auth.resend({ type: 'signup', email: email.trim(), options: { emailRedirectTo: redirectTo } });
+        : await supabase.auth.resend({ type: 'signup', email: email.trim(), options: { emailRedirectTo: `${window.location.origin}/auth/callback` } });
       setMessage(error
         ? { type: 'error', text: error.message }
         : { type: 'success', text: 'Email requested. Check your inbox and spam folder.' });

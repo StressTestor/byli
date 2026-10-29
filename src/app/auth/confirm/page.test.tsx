@@ -16,10 +16,10 @@ async function render(query = 'email=person%40example.com&type=signup') {
 }
 afterEach(() => { if (tree) act(() => tree.unmount()); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 describe('confirmation resend', () => {
-  it('resends signup with existing redirect', async () => {
+  it('resends signup through the session callback', async () => {
     mocks.resend.mockResolvedValue({ error: null }); const button = await render();
     await act(async () => button().props.onClick());
-    expect(mocks.resend).toHaveBeenCalledWith({ type: 'signup', email: 'person@example.com', options: { emailRedirectTo: 'https://linkdrift.app/auth/confirm' } });
+    expect(mocks.resend).toHaveBeenCalledWith({ type: 'signup', email: 'person@example.com', options: { emailRedirectTo: 'https://linkdrift.app/auth/callback' } });
     expect(JSON.stringify(tree.toJSON())).toContain('Email requested.');
   });
   it('uses recovery API for reset', async () => {
