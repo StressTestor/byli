@@ -27,7 +27,7 @@ vi.mock('@/lib/agent-auth', async () => {
     hashAgentSecret: (token: string) => createHash('sha256').update(token).digest('hex'),
     agentDb: { from: (table: string) => {
       const q: any = {};
-      for (const method of ['select', 'order', 'limit', 'insert', 'update', 'eq']) q[method] = (...args: unknown[]) => {
+      for (const method of ['select', 'order', 'limit', 'range', 'insert', 'update', 'eq']) q[method] = (...args: unknown[]) => {
         state.calls.push(['agent', table, method, ...args]); return q;
       };
       q.then = (resolve: (value: unknown) => void) => resolve({ data: state.agentData, error: state.agentError });
@@ -86,8 +86,8 @@ describe('owner-only credential lifecycle', () => {
     const result = await GET(request('GET'));
     expect(result.status).toBe(200);
     expect(result.headers.get('cache-control')).toBe('no-store');
-    expect(await result.json()).toEqual({ credentials: state.agentData });
-    expect(state.calls).toContainEqual(['agent', 'agent_credentials', 'limit', 100]);
+    expect(await result.json()).toEqual({ credentials: state.agentData, offset:0, nextOffset:null });
+    expect(state.calls).toContainEqual(['agent', 'agent_credentials', 'range', 0, 99]);
     const select = state.calls.find(c => c[2] === 'select')!;
     expect(select[3]).not.toContain('secret_hash');
   });
@@ -149,4 +149,16 @@ it('rejects streamed credential bodies over 8KiB without issuing a key', async (
   const result = await POST(request('POST', { ...validBody, padding: 'x'.repeat(8192) }));
   expect(result.status).toBe(400);
   expect(state.calls.some(call => call[0] === 'agent' && call[2] === 'insert')).toBe(false);
+});
+
+it('pages metadata beyond the first hundred with stable ordering', async () => {
+  state.agentData = Array.from({ length: 100 }, (_, i) => ({ id: `key-${i}` }));
+  const response = await GET(new NextRequest('https://linkdrift.app/api/admin/agent-credentials?offset=100'));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ offset: 100, nextOffset: 200 });
+  expect(state.calls).toContainEqual(['agent','agent_credentials','range',100,199]);
+  expect(state.calls).toContainEqual(['agent','agent_credentials','order','id',{ascending:false}]);
+});
+it.each(['-1','1.5','Infinity','100001'])('rejects invalid list offset %s', async offset => {
+  expect((await GET(new NextRequest(`https://linkdrift.app/api/admin/agent-credentials?offset=${offset}`))).status).toBe(400);
 });

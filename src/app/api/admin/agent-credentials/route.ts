@@ -37,8 +37,13 @@ async function owner(req: NextRequest, mutation = false) {
 export async function GET(req: NextRequest) {
   const userId = await owner(req);
   if (!userId) return NextResponse.json({ error: 'Admin login required' }, { status: 403, headers });
-  const { data, error } = await agentDb.from('agent_credentials').select(publicFields).order('created_at', { ascending: false }).limit(100);
-  return NextResponse.json(error ? { error: 'Lookup failed' } : { credentials: data }, { status: error ? 503 : 200, headers });
+  const rawOffset = req.nextUrl.searchParams.get('offset') ?? '0';
+  const offset = Number(rawOffset);
+  if (!/^\d+$/.test(rawOffset) || !Number.isSafeInteger(offset) || offset > 100000)
+    return NextResponse.json({ error: 'Invalid offset' }, { status: 400, headers });
+  const { data, error } = await agentDb.from('agent_credentials').select(publicFields)
+    .order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 99);
+  return NextResponse.json(error ? { error: 'Lookup failed' } : { credentials: data, offset, nextOffset: data?.length === 100 && offset <= 99900 ? offset + 100 : null }, { status: error ? 503 : 200, headers });
 }
 export async function POST(req: NextRequest) {
   const userId = await owner(req, true);
