@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({
   user: { id: 'admin-1' } as any,
   isAdmin: true,
+  agent: false,
   submission: { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' } as any,
   updates: [] as any[],
   updateFilters: [] as any[],
@@ -11,6 +12,10 @@ const state = vi.hoisted(() => ({
   ingest: vi.fn(),
 }));
 
+vi.mock('@/lib/agent-auth', () => {
+  class AgentAuthError extends Error { status = 401; }
+  return { AgentAuthError, authenticateAgent: async () => { if (!state.agent) throw new AgentAuthError(); return {userId:'other-admin',credentialId:'key'}; } };
+});
 vi.mock('@/lib/supabase-server', () => ({
   createSupabaseServer: async () => ({
     auth: { getUser: async () => ({ data: { user: state.user } }) },
@@ -43,11 +48,12 @@ vi.mock('@/lib/ingest', () => ({ ingestSingleArticle: (...a: any[]) => state.ing
 
 import { POST } from './route';
 
-const call = () => POST({} as any, { params: Promise.resolve({ id: 's1' }) });
+const call = () => POST({headers: new Headers()} as any, { params: Promise.resolve({ id: 's1' }) });
 
 beforeEach(() => {
   state.user = { id: 'admin-1' };
   state.isAdmin = true;
+  state.agent = false;
   state.submission = { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' };
   state.updates = [];
   state.updateFilters = [];
@@ -113,4 +119,15 @@ describe('approve submission route', () => {
     expect((await res.json()).error).toMatch(/someone else/);
     expect(state.ingest).not.toHaveBeenCalled();
   });
+});
+
+it('accepts valid admin bearer independently of browser session', async () => {
+  state.user = null; state.agent = true;
+  const response = await POST({headers:new Headers({authorization:'Bearer agent'})} as any, {params:Promise.resolve({id:'s1'})});
+  expect(response.status).toBe(200);
+  expect(state.updates[0].row.reviewed_by).toBe('other-admin');
+});
+it('does not fall back to owner cookies for an invalid bearer', async () => {
+  const response = await POST({headers:new Headers({authorization:'Bearer invalid'})} as any, {params:Promise.resolve({id:'s1'})});
+  expect(response.status).toBe(401); expect(state.ingest).not.toHaveBeenCalled();
 });

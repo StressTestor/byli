@@ -6,6 +6,7 @@
  * article to the submission. Admin only (checked via is_admin() as the caller).
  */
 
+import { authenticateAgent, AgentAuthError } from '@/lib/agent-auth';
 import { NextResponse, NextRequest } from 'next/server';
 import { createSupabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
@@ -20,14 +21,25 @@ export async function POST(
 ) {
   const { id } = await params;
 
+  let user: { id: string };
+  if (_req.headers.has('authorization')) {
+    try { user = { id: (await authenticateAgent(_req.headers.get('authorization'), 'approve_submission')).userId }; }
+    catch (error) {
+      if (!(error instanceof AgentAuthError)) throw error;
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+  } else {
   const supabase = await createSupabaseServer();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  const { data: { user: browserUser } } = await supabase.auth.getUser();
+  if (!browserUser) {
     return NextResponse.json({ error: 'Login required' }, { status: 401 });
   }
   const { data: isAdmin, error: adminErr } = await supabase.rpc('is_admin');
   if (adminErr || isAdmin !== true) {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
+  }
+
+    user = browserUser;
   }
 
   const { data: submission, error: subErr } = await supabaseAdmin
