@@ -25,9 +25,9 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+function formatCount(n: number | null): string {
+  if (n !== null && n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n !== null && n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
 
@@ -140,7 +140,7 @@ export default async function AuthorPage({
             <p className="text-sm text-zinc-500 mb-3">@{author.handle}</p>
 
             <div className="flex items-center gap-4 text-sm text-zinc-400">
-              <span>{formatCount(author.follower_count ?? 0)} followers</span>
+              <span>{formatCount(author.follower_count)} followers</span>
               <span className="text-zinc-700">·</span>
               <span>{author.article_count} article{author.article_count === 1 ? '' : 's'}</span>
             </div>
