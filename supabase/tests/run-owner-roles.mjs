@@ -15,7 +15,8 @@ try {
  INSERT INTO auth.identities VALUES ('${owner}','github','212606152','{}');
  GRANT SELECT ON profiles TO authenticated; GRANT ALL ON profiles TO service_role;
  ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
- CREATE POLICY reads ON profiles FOR SELECT TO authenticated USING(true);`);
+ CREATE POLICY reads ON profiles FOR SELECT TO authenticated USING(true);
+ CREATE POLICY own_profile ON profiles FOR UPDATE TO authenticated USING(auth.uid()=id) WITH CHECK(auth.uid()=id);`);
  await db.exec(await readFile(new URL('../migrations/20261118015649_owner_admin_role_control.sql',import.meta.url),'utf8'));
  await db.exec(`CREATE TRIGGER guard_update BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();
  CREATE TRIGGER guard_insert BEFORE INSERT ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();`);
@@ -34,8 +35,17 @@ try {
  await assert.rejects(db.query('DELETE FROM profiles WHERE id=$1',[owner]));
  await db.query("UPDATE profiles SET role='moderator' WHERE id=$1",[target]);
  await session(admin,'authenticated');
+ await assert.rejects(db.query("UPDATE profiles SET role='user' WHERE id=$1",[admin]));
  await db.query("UPDATE profiles SET role='admin' WHERE id=$1",[target]);
  assert.equal((await db.query('SELECT role FROM profiles WHERE id=$1',[target])).rows[0].role,'moderator'); // RLS denies target
+ await session(target,'authenticated');
+ await assert.rejects(db.query("UPDATE profiles SET role='admin' WHERE id=$1",[target]));
+ await assert.rejects(db.query("UPDATE profiles SET role='user' WHERE id=$1",[target]));
+ await db.exec('RESET ROLE');
+ await session('','service_role');
+ await db.query("UPDATE profiles SET role='user' WHERE id=$1",[target]);
+ await session(target,'authenticated');
+ await assert.rejects(db.query("UPDATE profiles SET role='moderator' WHERE id=$1",[target]));
  await db.exec('RESET ROLE');
  await db.query("UPDATE auth.identities SET provider_id='wrong',identity_data=$1 WHERE user_id=$2",[JSON.stringify({user_name:'StressTestor',id:'212606152'}),owner]);
  await session(owner,'authenticated');

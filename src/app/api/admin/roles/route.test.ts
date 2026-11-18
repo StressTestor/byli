@@ -47,7 +47,9 @@ describe('owner browser role management', () => {
     expect(state.updates).toEqual([]);
   });
   it.each(['user', 'moderator'])('prevents owner self-demotion to %s', async role => {
-    expect((await call({ id: CREDENTIAL_OWNER_USER_ID, role })).status).toBe(403);
+    for (const id of [CREDENTIAL_OWNER_USER_ID, CREDENTIAL_OWNER_USER_ID.toUpperCase()]) {
+      expect((await call({ id, role })).status).toBe(403);
+    }
     expect(state.updates).toEqual([]);
   });
   it.each([{ id: '*', role: 'admin' }, { id: target, role: 'owner' }, null])('rejects invalid input %j', async body => {
