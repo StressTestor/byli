@@ -16,6 +16,7 @@
  * the ingest_runs table.
  */
 
+import { authenticateAgent, AgentAuthError } from '@/lib/agent-auth';
 import { NextResponse, NextRequest } from 'next/server';
 import { safeEqual } from '@/lib/timing-safe-equal';
 import { runIngestion, ingestSingleArticle, sleep } from '@/lib/ingest';
@@ -30,7 +31,11 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const secret = process.env.CRON_SECRET;
   if (!secret?.trim() || !safeEqual(authHeader, `Bearer ${secret}`)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    try { await authenticateAgent(authHeader, 'ingest'); }
+    catch (error) {
+      if (!(error instanceof AgentAuthError)) throw error;
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
   }
 
   const outcome = await runIngestion();
@@ -50,7 +55,11 @@ export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const secret = process.env.CRON_SECRET;
   if (!secret?.trim() || !safeEqual(authHeader, `Bearer ${secret}`)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    try { await authenticateAgent(authHeader, 'ingest'); }
+    catch (error) {
+      if (!(error instanceof AgentAuthError)) throw error;
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
   }
 
   const body = await req.json();

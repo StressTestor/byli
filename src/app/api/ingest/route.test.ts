@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ run: vi.fn() }));
+const state = vi.hoisted(() => ({ run: vi.fn(), agent: false }));
 
+vi.mock('@/lib/agent-auth', () => {
+  class AgentAuthError extends Error { status = 401; }
+  return { AgentAuthError, authenticateAgent: async () => { if (!state.agent) throw new AgentAuthError(); return {userId:'admin', credentialId:'key'}; } };
+});
 vi.mock('@/lib/ingest', () => ({
   runIngestion: (...a: any[]) => state.run(...a),
   ingestSingleArticle: vi.fn(),
@@ -15,6 +19,7 @@ const call = (auth = 'Bearer test-secret') =>
   GET(new Request('http://localhost/api/ingest', { headers: { authorization: auth } }) as any);
 
 beforeEach(() => {
+  state.agent = false;
   process.env.CRON_SECRET = 'test-secret';
   state.run = vi.fn(async () => ({ ok: true, result: stats }));
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -69,3 +74,5 @@ describe('cron authentication fails closed', () => {
     expect(state.run).not.toHaveBeenCalled();
   });
 });
+
+it('accepts an authenticated agent without the cron secret', async () => { state.agent = true; delete process.env.CRON_SECRET; expect((await call('Bearer agent')).status).toBe(200); });
