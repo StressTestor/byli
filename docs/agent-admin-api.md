@@ -22,12 +22,14 @@ Each body includes `operation` and only the relevant fields below. IDs are UUID 
 | `article.status` | `id`, `status` | Status: pending, published, archived, rejected |
 | `article.delete` | `id` | Permanently delete article; database cascades apply |
 | `submission.reject` | `id` | Reject a pending submission only; record owner as reviewer |
-| `setting.update` | `key`, `value` (boolean) | Update an existing boolean setting |
+| `setting.update` | `key`, `value` | Update an existing boolean setting, or numeric featured_limit |
+| `health.run` | None | Run fresh database health checks and return the summary |
+| `profile.role` | `id`, `role` | Switch user/moderator only; existing admins and owner protected |
 | `seed.create` | `handle`, `status`, optional `high_yield` (boolean) | Create seed; record owner as submitter |
 | `seed.update` | `id`, `status`, `high_yield` (boolean) | Change seed status and high-yield flag |
 | `seed.delete` | `id` | Permanently remove seed |
 
-Seed status is pending, approved, or rejected. Handles contain 1–50 ASCII letters, digits, or underscores, without `@`. Boolean settings are `ingestion_enabled`, `submissions_enabled`, `signup_enabled`, and `maintenance_mode`. Numeric `featured_limit` is deliberately not exposed as a boolean toggle.
+Seed status is pending, approved, or rejected. Handles contain 1–50 ASCII letters, digits, or underscores, without `@`. Boolean settings are `ingestion_enabled`, `submissions_enabled`, `signup_enabled`, and `maintenance_mode`. `featured_limit` requires an integer from 0 to 100 and is stored as a JSON number, not coerced to a boolean. No other setting keys are writable.
 
 Successful mutations return `{ "ok": true, "data": [{ "id": "..." }], "auditRecorded": true }` (setting updates return `key`). Missing targets or a submission no longer pending return 409. Validation errors return 400, authentication failures return the auth layer's 401/403, and database failures return a generic 500 without internal details. JSON bodies are limited to 8192 bytes, including requests without Content-Length.
 
@@ -35,7 +37,7 @@ Successful mutations return `{ "ok": true, "data": [{ "id": "..." }], "auditReco
 
 Submission approval must use the existing ingestion-backed approval route, not a raw status edit. Ingestion is a separate API. Consult the credential lifecycle and route integration documentation for those routes and token creation/revocation.
 
-This API grants application administration, not hosting, repository, DNS, database console, infrastructure secrets, or unrestricted Supabase access. It does not change external agent approval requirements. It cannot grant profile roles or alter authentication identities; the current admin dashboard's user management is read-only as well. `list.health` reads recorded health checks, not a fresh health-check run.
+This API grants application administration, not hosting, repository, DNS, database console, infrastructure secrets, or unrestricted Supabase access. It does not change external agent approval requirements. `profile.role` can switch user and moderator roles only. All bearer credentials, including owner-issued credentials, are forbidden from granting admin or demoting an existing admin. Every bearer credential is also prohibited from changing the pinned owner account's role. Giving another account the admin role does not make it the owner or permit credential lifecycle management. Authentication identities cannot be altered. `list.health` reads recorded checks; `health.run` creates a fresh run and returns its summary as the single element in `data`. The health RPC is fixed and cannot be selected by the caller.
 
 All tests for the dispatcher use mocked database and auth clients. No production submission, seed, setting, or article is modified by these tests. No real credential has been issued by the implementation tests.
 
@@ -59,4 +61,14 @@ Secrets contain 256 random bits and only SHA-256 digests persist. Credentials ex
 
 ## Rollout / verification
 
-Apply `20261118015049_agent_credentials.sql` before enabling clients. Deploy this branch only after tests/review. No real token was issued during development; all tests use mocks or an ephemeral PostgreSQL instance. Run `node supabase/tests/run-agent-credentials.mjs`, `vitest run`, `tsc --noEmit`, and `next build`. After rollout, the owner should issue a short-lived token and verify a read-only list request, revoke it, and verify the same request is denied before issuing the operational key. Do not test on real pending submissions. Never distribute a Supabase service-role key as a substitute.
+Apply `20261118015049_agent_credentials.sql` before enabling clients. Deploy this branch only after tests/review. No production token was issued during development. A real randomly generated disposable test token was authenticated, expired, revoked, and rechecked using the production auth function with an isolated PostgreSQL adapter; its database was destroyed and its secret was never printed. HTTP route tests use mocks; a full deployed HTTP-to-Supabase end-to-end test remains pending. Run `node supabase/tests/run-agent-credentials.mjs`, `vitest run`, `tsc --noEmit`, and `next build`. After rollout, the owner should issue a short-lived token and verify a read-only list request, revoke it, and verify the same request is denied before issuing the operational key. Do not test on real pending submissions. Never distribute a Supabase service-role key as a substitute.
+
+Role demotion disables a principal’s credentials while they are not an admin; restoring their role restores any still-valid, unrevoked credentials. Explicit key revocation is permanent and owner-only. This is separate from normal administrator role management.
+
+## Owner-only admin promotion and demotion
+
+`POST /api/admin/roles` accepts `{ "id": "profile-uuid", "role": "user|moderator|admin" }` from the verified owner's same-origin browser session only. Authorization headers are rejected, even when owner cookies are also present. Non-owner admins cannot use this endpoint. The owner cannot demote their own account. Updates use the owner's authenticated Supabase session, not a service-role client, so the database guard sees the verified caller. Admin promotion/demotion is reserved to that owner session across API and direct database-access paths by the accompanying database guard.
+
+Owner account demotion/deletion is rejected to avoid lockout. Ownership transfer or recovery is deliberately not exposed through an agent token or generic admin route: it requires a separately authorized, reviewed server/database migration updating both verified identity bindings and policy constants. Privileged database operators who can change the schema remain a trusted infrastructure boundary; this feature cannot prevent a database owner from deliberately replacing its enforcement code.
+
+The role-control migration also guards INSERT and DELETE, not only UPDATE, and records successful admin transitions in the same database transaction. Failure to write that audit aborts the transition. It uses `auth.identities.provider_id`, never user-editable identity metadata. A service-role request with no authenticated owner session cannot grant/remove administrators. Deploy both migrations before the API code.

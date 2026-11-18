@@ -6,7 +6,7 @@ import { agentDb, hashAgentSecret, newAgentSecret } from '@/lib/agent-auth';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
 const headers = { 'Cache-Control': 'no-store', 'Pragma': 'no-cache' };
-const publicFields = 'id,label,scope,created_at,expires_at,revoked_at';
+const publicFields = 'id,owner_id,label,scope,created_at,expires_at,revoked_at';
 async function readBody(req: NextRequest) {
   const reader = req.body?.getReader();
   if (!reader) return null;
@@ -26,6 +26,7 @@ async function readBody(req: NextRequest) {
 }
 async function owner(req: NextRequest, mutation = false) {
   // Credential lifecycle is intentionally browser-owner-only, never bearer auth.
+  if (req.headers.has('authorization')) return null;
   if (mutation && req.headers.get('origin') !== req.nextUrl.origin) return null;
   const db = await createSupabaseServer();
   const { data: { user } } = await db.auth.getUser();
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
   const token = newAgentSecret();
   const expiresAt = new Date(Date.now() + ttl * 86400000).toISOString();
   // Pre-log issuance intent; a failed insert leaves no usable secret.
-  const { error: auditError } = await supabaseAdmin.from('admin_logs').insert({ admin_id: userId, action: 'agent_credential_issue_requested', target_type: 'agent_credential', target_id: id, metadata: { expires_at: expiresAt } });
+  const { error: auditError } = await supabaseAdmin.from('admin_logs').insert({ admin_id: userId, action: 'agent_credential_issue_requested', target_type: 'agent_credential', target_id: id, metadata: { expires_at: expiresAt, principal_id: principalId } });
   if (auditError) return NextResponse.json({ error: 'Audit service unavailable' }, { status: 503, headers });
   const { error } = await agentDb.from('agent_credentials').insert({ id, owner_id: principalId, label: body.label.trim(), scope: 'admin', secret_hash: hashAgentSecret(token), expires_at: expiresAt });
   return NextResponse.json(error ? { error: 'Issue failed' } : { id, token, scope: 'admin', expiresAt }, { status: error ? 503 : 201, headers });

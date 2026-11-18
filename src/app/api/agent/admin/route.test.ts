@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CREDENTIAL_OWNER_USER_ID } from '@/lib/credential-owner';
 import { NextRequest } from 'next/server';
-const state = vi.hoisted(() => ({ calls: [] as unknown[][], denied: false, auditFailure: 0, auditCount: 0, data: [{ id: 'a' }] as unknown[], error: null as unknown }));
+const state = vi.hoisted(() => ({ calls: [] as unknown[][], denied: false, actorId: 'owner', currentRole: 'user', auditFailure: 0, auditCount: 0, data: [{ id: 'a' }] as unknown[], error: null as unknown }));
 vi.mock('@/lib/agent-auth', () => {
   class AgentAuthError extends Error { status = 401; }
   return { AgentAuthError, authenticateAgent: vi.fn(async () => {
     if (state.denied) throw new AgentAuthError();
-    return { userId: 'owner', credentialId: 'credential' };
+    return { userId: state.actorId, credentialId: 'credential' };
   }) };
 });
-vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { from: (table: string) => {
+vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { rpc: async (name: string) => { state.calls.push(['rpc', name]); return { data: state.data, error: state.error }; }, from: (table: string) => {
   state.calls.push(['from', table]);
   const builder: any = {};
   for (const method of ['select', 'eq', 'order', 'range', 'update', 'insert', 'delete']) {
     builder[method] = (...args: unknown[]) => { state.calls.push([method, ...args]); return builder; };
   }
+  builder.maybeSingle = async () => ({ data: { role: state.currentRole }, error: null });
   builder.then = (resolve: (value: unknown) => void) => {
     if (table === 'admin_logs') { state.auditCount++; return resolve({ data: [], error: state.auditCount === state.auditFailure ? { message: 'audit unavailable' } : null }); }
     return resolve({ data: state.data, error: state.error });
@@ -23,7 +25,7 @@ vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { from: (table: string) 
 import { POST } from './route';
 const id = '12345678-1234-1234-1234-123456789abc';
 const call = (body: unknown) => POST(new NextRequest('https://linkdrift.app/api/agent/admin', { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer test' } }));
-beforeEach(() => { state.calls = []; state.auditCount = 0; state.auditFailure = 0; state.denied = false; state.data = [{ id }]; state.error = null; });
+beforeEach(() => { state.calls = []; state.actorId = 'owner'; state.currentRole = 'user'; state.auditCount = 0; state.auditFailure = 0; state.denied = false; state.data = [{ id }]; state.error = null; });
 describe('agent admin dispatcher', () => {
   it('does not touch database when credential is rejected', async () => {
     state.denied = true;
@@ -106,6 +108,56 @@ describe('agent admin dispatcher', () => {
     state.data = [];
     expect((await call({ operation: 'submission.reject', id })).status).toBe(409);
     expect(state.calls).toContainEqual(['insert', expect.objectContaining({ action: 'agent_operation_no_match' })]);
+  });
+  it.each([0, 5, 100])('sets numeric featured_limit %s without boolean coercion', async value => {
+    expect((await call({ operation: 'setting.update', key: 'featured_limit', value })).status).toBe(200);
+    expect(state.calls).toContainEqual(['update', expect.objectContaining({ value })]);
+  });
+  it.each([-1, 101, 1.5, '5', true])('rejects invalid featured_limit %s', async value => {
+    expect((await call({ operation: 'setting.update', key: 'featured_limit', value })).status).toBe(400);
+    expect(state.calls).toEqual([]);
+  });
+  it('runs the fixed health RPC after a durable audit attempt', async () => {
+    expect((await call({ operation: 'health.run' })).status).toBe(200);
+    expect(state.calls).toContainEqual(['rpc', 'run_db_health_check']);
+    expect(state.calls.findIndex(c => c[0] === 'insert')).toBeLessThan(state.calls.findIndex(c => c[0] === 'rpc'));
+  });
+  it('does not run health checks without durable audit', async () => {
+    state.auditFailure = 1;
+    expect((await call({ operation: 'health.run' })).status).toBe(503);
+    expect(state.calls.some(c => c[0] === 'rpc')).toBe(false);
+  });
+  it.each(['user', 'moderator'])('sets explicit profile role %s', async role => {
+    expect((await call({ operation: 'profile.role', id, role })).status).toBe(200);
+    expect(state.calls).toContainEqual(['update', expect.objectContaining({ role })]);
+    expect(state.calls).toContainEqual(['eq', 'id', id]);
+  });
+  it('never promotes to admin via a bearer, including an owner-issued credential', async () => {
+    for (const actorId of ['other-admin', CREDENTIAL_OWNER_USER_ID]) {
+      state.actorId = actorId;
+      expect((await call({ operation: 'profile.role', id, role: 'admin' })).status).toBe(403);
+    }
+    expect(state.calls).toEqual([]);
+  });
+  it('never demotes existing admins through bearer credentials', async () => {
+    state.currentRole = 'admin';
+    for (const role of ['user', 'moderator']) {
+      expect((await call({ operation: 'profile.role', id, role })).status).toBe(403);
+    }
+    expect(state.calls.some(c => c[0] === 'update')).toBe(false);
+  });
+  it('rejects unsupported profile roles', async () => {
+    expect((await call({ operation: 'profile.role', id, role: 'owner' })).status).toBe(400);
+    expect(state.calls).toEqual([]);
+  });
+  it.each(['other-admin', CREDENTIAL_OWNER_USER_ID])('protects owner account from bearer %s', async actorId => {
+    state.actorId = actorId;
+    for (const role of ['user', 'moderator', 'admin']) {
+      for (const ownerId of [CREDENTIAL_OWNER_USER_ID, CREDENTIAL_OWNER_USER_ID.toUpperCase()]) {
+        expect((await call({ operation: 'profile.role', id: ownerId, role })).status).toBe(403);
+      }
+    }
+    expect(state.calls).toEqual([]);
   });
   it('reports stale/missing targets', async () => {
     state.data = [];

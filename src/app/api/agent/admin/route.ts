@@ -1,3 +1,4 @@
+import { CREDENTIAL_OWNER_USER_ID } from '@/lib/credential-owner';
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateAgent, AgentAuthError } from '@/lib/agent-auth';
@@ -11,7 +12,7 @@ const reads = {
   'list.authors': 'authors',
 } as const;
 const writes = ['article.feature', 'article.status', 'article.delete', 'submission.reject',
-  'setting.update', 'seed.create', 'seed.update', 'seed.delete'] as const;
+  'setting.update', 'health.run', 'profile.role', 'seed.create', 'seed.update', 'seed.delete'] as const;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 class InputError extends Error {}
 class AuditError extends Error {}
@@ -57,8 +58,8 @@ export async function POST(req: NextRequest) {
       if (result.error) return reply({ error: 'Read failed' }, 500);
       return reply({ data: result.data, offset, limit });
     }
-    if (op !== 'seed.create' && op !== 'setting.update') check(typeof input.id === 'string' && uuid.test(input.id));
-    const id = op === 'seed.create' || op === 'setting.update' ? '' : input.id as string;
+    if (op !== 'seed.create' && op !== 'setting.update' && op !== 'health.run') check(typeof input.id === 'string' && uuid.test(input.id));
+    const id = op === 'seed.create' || op === 'setting.update' || op === 'health.run' ? '' : input.id as string;
     // Authorization is not a completed operation. Correlate a durable attempt
     // with its outcome; a failed result log must not invite a duplicate mutation.
     const attemptId = randomUUID();
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
         target_id: id || null,
         metadata: { credential_id: actor.credentialId, attempt_id: attemptId, operation,
           ...(op === 'setting.update' ? { setting_key: input.key as string } : {}),
+          ...(op === 'profile.role' ? { requested_role: input.role as string } : {}),
           ...(op === 'seed.create' ? { seed_handle: input.handle as string } : {}),
         },
       });
@@ -96,9 +98,33 @@ export async function POST(req: NextRequest) {
       case 'submission.reject':
         result = await mutate(() => supabaseAdmin.from('submissions').update({ status: 'rejected', reviewed_by: actor.userId, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'pending').select('id')); break;
       case 'setting.update':
-        check(['ingestion_enabled', 'submissions_enabled', 'signup_enabled', 'maintenance_mode'].includes(String(input.key)));
-        check(typeof input.value === 'boolean');
-        result = await mutate(() => supabaseAdmin.from('site_settings').update({ value: String(input.value), updated_by: actor.userId, updated_at: new Date().toISOString() }).eq('key', input.key as string).select('key')); break;
+        if (input.key === 'featured_limit') {
+          check(typeof input.value === 'number' && Number.isInteger(input.value) && input.value >= 0 && input.value <= 100);
+        } else {
+          check(['ingestion_enabled', 'submissions_enabled', 'signup_enabled', 'maintenance_mode'].includes(String(input.key)));
+          check(typeof input.value === 'boolean');
+        }
+        result = await mutate(() => supabaseAdmin.from('site_settings').update({ value: input.key === 'featured_limit' ? input.value as number : String(input.value), updated_by: actor.userId, updated_at: new Date().toISOString() }).eq('key', input.key as string).select('key')); break;
+      case 'health.run':
+        result = await mutate(async () => {
+          const { data, error } = await supabaseAdmin.rpc('run_db_health_check');
+          return { data: data === null ? null : [data], error };
+        }); break;
+      case 'profile.role':
+        check(['user', 'moderator', 'admin'].includes(String(input.role)));
+        if (id.toLowerCase() === CREDENTIAL_OWNER_USER_ID) {
+          return reply({ error: 'Owner role cannot be changed using agent credentials' }, 403);
+        }
+        if (input.role === 'admin') return reply({ error: 'Admin role changes require the owner browser session' }, 403);
+        // The database trigger is the authoritative concurrency boundary. This
+        // check gives a clear API error; the conditional update also avoids
+        // overwriting a concurrent role change.
+        const current = await supabaseAdmin.from('profiles').select('role').eq('id', id).maybeSingle();
+        if (current.error) return reply({ error: 'Role lookup failed' }, 500);
+        if (!current.data) return reply({ error: 'Target missing or state changed' }, 409);
+        if (current.data.role === 'admin') return reply({ error: 'Admin role changes require the owner browser session' }, 403);
+        const currentRole = current.data.role;
+        result = await mutate(() => supabaseAdmin.from('profiles').update({ role: input.role as string, updated_at: new Date().toISOString() }).eq('id', id).eq('role', currentRole).select('id')); break;
       case 'seed.create':
         check(typeof input.handle === 'string' && /^[a-zA-Z0-9_]{1,50}$/.test(input.handle));
         check(['pending', 'approved', 'rejected'].includes(String(input.status)));
