@@ -4,6 +4,13 @@ const state = vi.hoisted(() => ({
   user: { id: 'admin-1' } as any,
   isAdmin: true,
   agent: false,
+  audits: [] as any[],
+  auditFailureAt: 0,
+  claimError: false,
+  linkError: false,
+  releaseError: false,
+  categoryError: false,
+  events: [] as string[],
   submission: { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' } as any,
   updates: [] as any[],
   updateFilters: [] as any[],
@@ -26,19 +33,23 @@ vi.mock('@/lib/supabase-server', () => ({
 vi.mock('@/lib/supabase-admin', () => {
   const from = (table: string) => {
     const b: any = {};
+    b.insert = async (row: any) => {
+      state.audits.push(row); state.events.push(row.action);
+      return { error: state.audits.length === state.auditFailureAt ? { message: 'unavailable' } : null };
+    };
     b.select = () => b;
     b.eq = () => b;
     b.maybeSingle = async () => ({ data: state.submission, error: null });
     b.update = (row: any) => {
-      state.updates.push({ table, row });
+      state.updates.push({ table, row }); state.events.push('update');
       const u: any = {};
       u.eq = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
       u.is = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
-      u.then = (resolve: (v: unknown) => void) => resolve({ error: null });
-      u.select = async () => ({ data: state.lostRace ? [] : [{ id: 's1' }], error: null });
+      u.then = (resolve: (v: unknown) => void) => resolve({ error: (row.article_id ? state.linkError : state.releaseError) ? { message: 'failed' } : null });
+      u.select = async () => ({ data: state.lostRace ? [] : [{ id: 's1' }], error: state.claimError ? { message: 'claim error' } : null });
       return u;
     };
-    b.upsert = async (row: any) => { state.upserts.push({ table, row }); return { error: null }; };
+    b.upsert = async (row: any) => { state.upserts.push({ table, row }); return { error: state.categoryError ? { message: 'category failed' } : null }; };
     return b;
   };
   return { supabaseAdmin: { from } };
@@ -54,6 +65,7 @@ beforeEach(() => {
   state.user = { id: 'admin-1' };
   state.isAdmin = true;
   state.agent = false;
+  state.audits = []; state.auditFailureAt = 0; state.claimError = false; state.linkError = false; state.releaseError = false; state.categoryError = false; state.events = [];
   state.submission = { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' };
   state.updates = [];
   state.updateFilters = [];
@@ -130,4 +142,72 @@ it('accepts valid admin bearer independently of browser session', async () => {
 it('does not fall back to owner cookies for an invalid bearer', async () => {
   const response = await POST({headers:new Headers({authorization:'Bearer invalid'})} as any, {params:Promise.resolve({id:'s1'})});
   expect(response.status).toBe(401); expect(state.ingest).not.toHaveBeenCalled();
+});
+
+const agentCall = () => {
+  state.agent = true;
+  return POST({ headers: new Headers({ authorization: 'Bearer agent' }) } as any, { params: Promise.resolve({ id: 's1' }) });
+};
+describe('bearer approval attribution', () => {
+  it('logs target/credential attempt before mutation and correlated success afterwards', async () => {
+    const response = await agentCall();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, auditRecorded: true });
+    expect(state.audits).toHaveLength(2);
+    expect(state.audits[0]).toMatchObject({ admin_id: 'other-admin', action: 'agent_approval_attempt', target_type: 'submission', target_id: 's1', metadata: { credential_id: 'key', operation: 'approve_submission' } });
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_succeeded', metadata: { attempt_id: state.audits[0].metadata.attempt_id, article_id: 'art-1', stage: 'complete' } });
+    expect(state.events[0]).toBe('agent_approval_attempt');
+    expect(JSON.stringify(state.audits)).not.toContain('Bearer');
+    expect(JSON.stringify(state.audits)).not.toContain(state.submission.url);
+  });
+  it('fails closed if the durable attempt cannot be written', async () => {
+    state.auditFailureAt = 1;
+    expect((await agentCall()).status).toBe(503);
+    expect(state.updates).toEqual([]);
+    expect(state.ingest).not.toHaveBeenCalled();
+  });
+  it('does not misreport a completed approval when outcome audit fails', async () => {
+    state.auditFailureAt = 2;
+    const response = await agentCall();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, auditRecorded: false });
+  });
+  it('records a lost pending-claim race as no match, not success', async () => {
+    state.lostRace = true;
+    expect((await agentCall()).status).toBe(409);
+    expect(state.audits[1].action).toBe('agent_approval_no_match');
+    expect(state.ingest).not.toHaveBeenCalled();
+  });
+  it('records an ingestion exception as unknown with stage retained', async () => {
+    state.ingest = vi.fn(async () => { throw new Error('private upstream detail'); });
+    const response = await agentCall();
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain('private upstream detail');
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_unknown', metadata: { stage: 'ingest' } });
+  });
+  it('records article-created/link-failed as partial', async () => {
+    state.linkError = true;
+    expect((await agentCall()).status).toBe(500);
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_partial', metadata: { stage: 'link', article_id: 'art-1' } });
+  });
+  it('records category failure honestly even though approval returns success', async () => {
+    state.categoryError = true;
+    expect((await agentCall()).status).toBe(200);
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_partial', metadata: { category_link_failed: true } });
+  });
+  it('distinguishes successful release request from failed release after ingestion failure', async () => {
+    state.ingest = vi.fn(async () => ({ ok: false, error: 'ingest failed' }));
+    expect((await agentCall()).status).toBe(502);
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_failed', metadata: { release_request_succeeded: true } });
+    state.audits = []; state.releaseError = true;
+    expect((await agentCall()).status).toBe(502);
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_partial', metadata: { release_request_succeeded: false } });
+  });
+  it('keeps browser behavior independent of bearer audit availability', async () => {
+    state.auditFailureAt = 1;
+    const response = await call();
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty('auditRecorded');
+    expect(state.audits).toEqual([]);
+  });
 });

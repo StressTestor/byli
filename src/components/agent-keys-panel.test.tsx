@@ -256,3 +256,55 @@ describe('owner agent key panel', () => {
   });
 
 });
+
+
+describe('owner panel scoped credentials', () => {
+  it('defaults new credentials to explicit full admin scope', async () => {
+    await mount();
+    expect(view!.root.findByProps({ 'aria-label': 'Key scope' }).props.value).toBe('admin');
+    await issue();
+    const creation = fetchMock.mock.calls.find(c => c[1]?.method === 'POST')!;
+    expect(JSON.parse(creation[1].body).scope).toBe('admin');
+  });
+  it.each([
+    { scope: 'submission_review', operation: 'list.submissions', display: 'Submission review only' },
+    { scope: 'admin', operation: 'list.categories', display: 'Full admin' },
+  ])('issues $scope, labels it, and uses $operation for read and revocation verification', async ({ scope, operation, display }) => {
+    await mount(); await label();
+    await act(async () => { view!.root.findByProps({ 'aria-label': 'Key scope' }).props.onChange({ target: { value: scope } }); });
+    fetchMock.mockResolvedValueOnce(response({ id: credential.id, token: secret, scope }, 201));
+    fetchMock.mockResolvedValueOnce(response({ credentials: [{ ...credential, scope }], offset: 0, nextOffset: null }));
+    await click(/^Create key$/);
+    const creation = fetchMock.mock.calls.find(c => c[1]?.method === 'POST')!;
+    expect(JSON.parse(creation[1].body).scope).toBe(scope);
+    expect(view!.root.findAllByType('p').some(p => text(p) === display)).toBe(true);
+    fetchMock.mockResolvedValueOnce(response({ data: [] }));
+    await click(/^Test read$/);
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body)).toEqual({ operation, limit: 1 });
+    fetchMock.mockResolvedValueOnce(response({ revoked: true }));
+    fetchMock.mockResolvedValueOnce(response({ error: 'Invalid credential' }, 401));
+    fetchMock.mockResolvedValueOnce(response({ credentials: [{ ...credential, scope, revoked_at: new Date().toISOString() }], offset: 0, nextOffset: null }));
+    await confirmAction('Revoke');
+    const reads = fetchMock.mock.calls.filter(c => c[0] === '/api/agent/admin');
+    expect(reads).toHaveLength(2);
+    expect(JSON.parse(reads[1][1].body)).toEqual({ operation, limit: 1 });
+    expect(rendered()).toContain('HTTP 401');
+    expect(button(/^Reveal key$/)).toBeUndefined();
+  });
+  it('preserves a review key scope during rotation even when new-key selector is admin', async () => {
+    const reviewKey = { ...credential, scope: 'submission_review' };
+    await mount(200, [reviewKey]);
+    expect(view!.root.findByProps({ 'aria-label': 'Key scope' }).props.value).toBe('admin');
+    fetchMock.mockResolvedValueOnce(response({ revoked: true }));
+    fetchMock.mockResolvedValueOnce(response({ id: 'replacement', token: secret, scope: 'submission_review' }, 201));
+    fetchMock.mockResolvedValueOnce(response({ credentials: [{ ...reviewKey, id: 'replacement' }], offset: 0, nextOffset: null }));
+    await confirmAction('Rotate');
+    const calls = fetchMock.mock.calls.slice(1);
+    expect(calls[0][1].method).toBe('DELETE');
+    expect(calls[1][1].method).toBe('POST');
+    expect(JSON.parse(calls[1][1].body)).toMatchObject({ scope: 'submission_review', adminUserId: credential.owner_id });
+    fetchMock.mockResolvedValueOnce(response({ data: [] }));
+    await click(/^Test read$/);
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body)).toEqual({ operation: 'list.submissions', limit: 1 });
+  });
+});

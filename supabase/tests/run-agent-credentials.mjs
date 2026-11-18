@@ -10,6 +10,7 @@ try {
     GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated,service_role;`);
   await db.exec(await readFile(new URL('../migrations/20261118020756_agent_credentials.sql', import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../migrations/20261118025808_submission_review_scope.sql', import.meta.url),'utf8'));
   const { rows: [grants] } = await db.query(`SELECT
     has_table_privilege('anon','agent_credentials','SELECT') AS anon_read,
     has_table_privilege('authenticated','agent_credentials','SELECT') AS user_read,
@@ -22,6 +23,8 @@ try {
     VALUES ('00000000-0000-0000-0000-000000000001','Synthetic test',$1,now()+interval '1 day') RETURNING id`, ['a'.repeat(64)]);
   await assert.rejects(db.query(`INSERT INTO agent_credentials(owner_id,label,secret_hash,expires_at)
     VALUES ('00000000-0000-0000-0000-000000000001','Bad TTL',$1,now()+interval '91 days')`, ['b'.repeat(64)]));
+  await db.query(`INSERT INTO agent_credentials(owner_id,label,scope,secret_hash,expires_at) VALUES ('00000000-0000-0000-0000-000000000001','Review','submission_review',$1,now()+interval '1 day')`,['c'.repeat(64)]);
+  await assert.rejects(db.query(`INSERT INTO agent_credentials(owner_id,label,scope,secret_hash,expires_at) VALUES ('00000000-0000-0000-0000-000000000001','Bad scope','superadmin',$1,now()+interval '1 day')`,['d'.repeat(64)]));
   await db.query('UPDATE agent_credentials SET revoked_at=now() WHERE id=$1',[credential.id]);
   await db.exec('RESET ROLE; SET ROLE authenticated');
   await assert.rejects(db.query('SELECT secret_hash FROM agent_credentials'));
