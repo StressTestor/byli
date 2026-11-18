@@ -26,6 +26,7 @@ try {
  await db.query("UPDATE profiles SET role='user' WHERE id=$1",[target]);
  await assert.rejects(db.query("UPDATE profiles SET role='user' WHERE id=$1",[owner]));
  await session('','service_role');
+ await assert.rejects(db.query("UPDATE profiles SET id='00000000-0000-0000-0000-000000000009' WHERE id=$1",[admin]));
  await assert.rejects(db.query("UPDATE profiles SET role='admin' WHERE id=$1",[target]));
  await assert.rejects(db.query("UPDATE profiles SET role='user' WHERE id=$1",[admin]));
  await assert.rejects(db.query("INSERT INTO profiles VALUES ('00000000-0000-0000-0000-000000000004','admin')"));

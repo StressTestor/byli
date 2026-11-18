@@ -20,7 +20,12 @@ BEGIN
     END IF;
     RETURN OLD;
   END IF;
-  IF TG_OP = 'UPDATE' THEN old_role := OLD.role; END IF;
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.id IS DISTINCT FROM OLD.id THEN
+      RAISE EXCEPTION 'Profile identity is immutable' USING ERRCODE = '42501';
+    END IF;
+    old_role := OLD.role;
+  END IF;
   IF (TG_OP = 'UPDATE' AND NEW.role IS NOT DISTINCT FROM OLD.role)
      OR (TG_OP = 'INSERT' AND NEW.role = 'user') THEN RETURN NEW; END IF;
 
