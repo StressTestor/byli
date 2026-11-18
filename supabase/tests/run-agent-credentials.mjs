@@ -9,7 +9,7 @@ try {
     INSERT INTO profiles VALUES ('00000000-0000-0000-0000-000000000001');
     GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated,service_role;`);
-  await db.exec(await readFile(new URL('../migrations/20261118015049_agent_credentials.sql', import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../migrations/20261118020756_agent_credentials.sql', import.meta.url),'utf8'));
   const { rows: [grants] } = await db.query(`SELECT
     has_table_privilege('anon','agent_credentials','SELECT') AS anon_read,
     has_table_privilege('authenticated','agent_credentials','SELECT') AS user_read,

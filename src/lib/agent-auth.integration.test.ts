@@ -32,7 +32,7 @@ beforeAll(async () => {
     CREATE TABLE profiles(id uuid PRIMARY KEY,role text);
     CREATE TABLE admin_logs(admin_id uuid,action text,target_id uuid,metadata jsonb);
     INSERT INTO profiles VALUES ('${principal}','admin');`);
-  await state.db.exec(await readFile('supabase/migrations/20261118015049_agent_credentials.sql','utf8'));
+  await state.db.exec(await readFile('supabase/migrations/20261118020756_agent_credentials.sql','utf8'));
 });
 afterAll(async () => state.db?.close());
 it('validates real disposable credentials, tampering, expiry, demotion and revocation', async () => {

@@ -17,7 +17,7 @@ try {
  ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
  CREATE POLICY reads ON profiles FOR SELECT TO authenticated USING(true);
  CREATE POLICY own_profile ON profiles FOR UPDATE TO authenticated USING(auth.uid()=id) WITH CHECK(auth.uid()=id);`);
- await db.exec(await readFile(new URL('../migrations/20261118015649_owner_admin_role_control.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../migrations/20261118021217_owner_admin_role_control.sql',import.meta.url),'utf8'));
  await db.exec(`CREATE TRIGGER guard_update BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();
  CREATE TRIGGER guard_insert BEFORE INSERT ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();`);
  const session=async(id,role)=>db.exec(`RESET ROLE; SET request.jwt.claim.sub='${id}'; SET request.jwt.claim.role='${role}'; SET ROLE ${role};`);
