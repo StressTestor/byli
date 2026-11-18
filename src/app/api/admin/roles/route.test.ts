@@ -67,3 +67,8 @@ describe('owner browser role management', () => {
     expect((await call()).status).toBe(404);
   });
 });
+
+it('rejects streamed owner bodies over 8KiB before any role write', async () => {
+  expect((await call({ id: target, role: 'admin', padding: 'x'.repeat(8192) })).status).toBe(400);
+  expect(state.updates).toEqual([]);
+});

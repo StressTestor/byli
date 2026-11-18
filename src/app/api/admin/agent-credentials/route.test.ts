@@ -144,3 +144,9 @@ describe('owner-only credential lifecycle', () => {
     expect(await result.json()).toEqual({ revoked: true, auditRecorded: false });
   });
 });
+
+it('rejects streamed credential bodies over 8KiB without issuing a key', async () => {
+  const result = await POST(request('POST', { ...validBody, padding: 'x'.repeat(8192) }));
+  expect(result.status).toBe(400);
+  expect(state.calls.some(call => call[0] === 'agent' && call[2] === 'insert')).toBe(false);
+});
