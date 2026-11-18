@@ -10,7 +10,7 @@ try {
     GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated,service_role;`);
   await db.exec(await readFile(new URL('../migrations/20261118020756_agent_credentials.sql', import.meta.url),'utf8'));
-  await db.exec(await readFile(new URL('../migrations/20261118025808_submission_review_scope.sql', import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../migrations/20261118030434_submission_review_scope.sql', import.meta.url),'utf8'));
   const { rows: [grants] } = await db.query(`SELECT
     has_table_privilege('anon','agent_credentials','SELECT') AS anon_read,
     has_table_privilege('authenticated','agent_credentials','SELECT') AS user_read,

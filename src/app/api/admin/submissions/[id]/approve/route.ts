@@ -145,13 +145,18 @@ export async function POST(
   }
 
   stage = 'link';
-  const { error: linkErr } = await supabaseAdmin
+  const { data: linked, error: linkErr } = await supabaseAdmin
     .from('submissions')
     .update({ article_id: articleId })
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (linkErr) {
     console.error('[approve] linking article failed:', linkErr);
     return finish({ error: 'Article ingested but submission update failed' }, 500, 'partial', { article_id: articleId });
+  }
+
+  if (!linked?.length) {
+    return finish({ error: 'Article ingested but submission disappeared before linking' }, 409, 'partial', { article_id: articleId });
   }
 
   stage = 'complete';

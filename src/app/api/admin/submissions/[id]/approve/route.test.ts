@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   auditFailureAt: 0,
   claimError: false,
   linkError: false,
+  linkNoMatch: false,
   releaseError: false,
   categoryError: false,
   events: [] as string[],
@@ -46,7 +47,9 @@ vi.mock('@/lib/supabase-admin', () => {
       u.eq = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
       u.is = (col: string, val: unknown) => { state.updateFilters.push([col, val]); return u; };
       u.then = (resolve: (v: unknown) => void) => resolve({ error: (row.article_id ? state.linkError : state.releaseError) ? { message: 'failed' } : null });
-      u.select = async () => ({ data: state.lostRace ? [] : [{ id: 's1' }], error: state.claimError ? { message: 'claim error' } : null });
+      u.select = async () => row.article_id
+        ? { data: state.linkNoMatch ? [] : [{ id: 's1' }], error: state.linkError ? { message: 'link error' } : null }
+        : { data: state.lostRace ? [] : [{ id: 's1' }], error: state.claimError ? { message: 'claim error' } : null };
       return u;
     };
     b.upsert = async (row: any) => { state.upserts.push({ table, row }); return { error: state.categoryError ? { message: 'category failed' } : null }; };
@@ -65,7 +68,7 @@ beforeEach(() => {
   state.user = { id: 'admin-1' };
   state.isAdmin = true;
   state.agent = false;
-  state.audits = []; state.auditFailureAt = 0; state.claimError = false; state.linkError = false; state.releaseError = false; state.categoryError = false; state.events = [];
+  state.audits = []; state.auditFailureAt = 0; state.claimError = false; state.linkError = false; state.linkNoMatch = false; state.releaseError = false; state.categoryError = false; state.events = [];
   state.submission = { id: 's1', url: 'https://x.com/a/status/2027172169336476151', status: 'pending', category_id: 'c1' };
   state.updates = [];
   state.updateFilters = [];
@@ -188,6 +191,13 @@ describe('bearer approval attribution', () => {
   it('records article-created/link-failed as partial', async () => {
     state.linkError = true;
     expect((await agentCall()).status).toBe(500);
+    expect(state.audits[1]).toMatchObject({ action: 'agent_approval_partial', metadata: { stage: 'link', article_id: 'art-1' } });
+  });
+  it('does not claim success when final link matched no submission', async () => {
+    state.linkNoMatch = true;
+    const response = await agentCall();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('disappeared') });
     expect(state.audits[1]).toMatchObject({ action: 'agent_approval_partial', metadata: { stage: 'link', article_id: 'art-1' } });
   });
   it('records category failure honestly even though approval returns success', async () => {
