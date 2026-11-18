@@ -9,8 +9,10 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { getAuthor } from '@/lib/public-page-data';
 
-// Revalidate the curated author listing every 15 minutes (ISR).
+// Existing route revalidation hint; this dynamic segment is not pre-rendered.
+// Do not introduce shared HTML caching without covering every moderation path.
 export const revalidate = 900;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -23,9 +25,9 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+function formatCount(n: number | null): string {
+  if (n !== null && n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n !== null && n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
 
@@ -38,13 +40,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { handle } = await params;
 
-  const { data } = await supabaseAdmin
-    .from('authors')
-    .select('display_name, handle, article_count')
-    .eq('handle', handle)
-    .single();
-
-  const author = data as any;
+  const author = await getAuthor(handle);
 
   if (!author) {
     return { title: 'Author Not Found' };
@@ -80,14 +76,7 @@ export default async function AuthorPage({
 }) {
   const { handle } = await params;
 
-  // fetch author
-  const { data: authorData } = await supabaseAdmin
-    .from('authors')
-    .select('*')
-    .eq('handle', handle)
-    .single();
-
-  const author = authorData as any;
+  const author = await getAuthor(handle);
   if (!author) notFound();
 
   // fetch published articles with stats and categories

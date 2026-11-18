@@ -1,39 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { supabaseAdmin } from '@/lib/supabase-admin';
-import { visibleArticleBodyPreview } from '@/lib/ingest-utils';
-import type { Article, Author, Category, ArticleStats } from '@/types/database';
+import { getArticle } from '@/lib/public-page-data';
 import { serializeJsonLd } from './json-ld';
 import { getRelatedArticles } from './related-articles';
-
-// ─── Types ──────────────────────────────────────────────────
-
-interface ArticleRow extends Article {
-  author: Author;
-  categories: Array<{ category: Category }>;
-  stats: ArticleStats;
-}
-
-// ─── Data Fetching ──────────────────────────────────────────
-
-async function getArticle(id: string): Promise<ArticleRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from('articles')
-    .select(`
-      *,
-      author:authors(*),
-      categories:article_categories(category:categories(*)),
-      stats:article_stats(*)
-    `)
-    .eq('id', id)
-    .eq('status', 'published')
-    .single();
-
-  if (error || !data) return null;
-  const row = data as unknown as ArticleRow;
-  return { ...row, body_preview: visibleArticleBodyPreview(row.body_preview) };
-}
 
 // ─── Helpers ────────────────────────────────────────────────
 

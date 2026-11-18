@@ -1,6 +1,8 @@
 import { ImageResponse } from 'next/og';
 
-export const runtime = 'edge';
+// Invariant artwork: generate once at build time instead of rasterizing on Edge.
+export const runtime = 'nodejs';
+export const dynamic = 'force-static';
 export const alt = 'Linkdrift - Where X Articles Surface';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';

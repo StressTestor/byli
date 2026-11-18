@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+// Only this page test needs Next's RSC cache export; keep the renderer's
+// ordinary React instance unchanged. With no RSC dispatcher, cache passes through.
+vi.mock('react', async () => ({
+  ...await vi.importActual<typeof import('react')>('react'),
+  cache: require('next/dist/compiled/react').cache,
+}));
+
 const { from } = vi.hoisted(() => ({ from: vi.fn() }));
 vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { from } }));
 
