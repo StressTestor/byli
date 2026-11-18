@@ -72,3 +72,11 @@ Role demotion disables a principal’s credentials while they are not an admin; 
 Owner account demotion/deletion is rejected to avoid lockout. Ownership transfer or recovery is deliberately not exposed through an agent token or generic admin route: it requires a separately authorized, reviewed server/database migration updating both verified identity bindings and policy constants. Privileged database operators who can change the schema remain a trusted infrastructure boundary; this feature cannot prevent a database owner from deliberately replacing its enforcement code.
 
 The role-control migration also guards INSERT and DELETE, not only UPDATE, and records successful admin transitions in the same database transaction. Failure to write that audit aborts the transition. It uses `auth.identities.provider_id`, never user-editable identity metadata. A service-role request with no authenticated owner session cannot grant/remove administrators. Deploy both migrations before the API code.
+
+## Owner key panel
+
+The existing admin dashboard includes an owner-only **Agent keys** tab. Visibility is based on a successful server credential-list check, not merely a client-side admin flag. Server checks remain authoritative for every operation.
+
+Create a labeled key with a 1–90 day expiration; optionally associate it with another current administrator. The new secret starts hidden and exists only in memory. Reveal it when ready to save it in your agent’s secret store, or dismiss it permanently. The panel never saves plaintext to local/session storage or logs. Existing secrets cannot be retrieved from the list.
+
+**Test read** performs only a one-category read and reports the HTTP status without displaying data. Revoking a newly created key additionally retries that same harmless read with the now-revoked credential; HTTP 401 confirms denial. Neither action touches submissions. Rotation revokes the old key before issuing a replacement, so access is interrupted until the new key is installed. If replacement issuance fails or is unconfirmed, the old key stays revoked; refresh the list before retrying.

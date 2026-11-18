@@ -1,5 +1,6 @@
 'use client';
 
+import { AgentKeysPanel } from '@/components/agent-keys-panel';
 import { SubmissionLink } from '@/components/submission-link';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -508,13 +509,30 @@ const TABS = [
   { key: 'history', label: 'History' },
 ] as const;
 
-type TabKey = typeof TABS[number]['key'];
+type TabKey = typeof TABS[number]['key'] | 'agent-keys';
 
 // ─── Admin Page ──────────────────────────────────────────────
 
 export default function AdminPage() {
   const { user, profile, loading, isAdmin } = useAdminProfile();
   const [activeTab, setActiveTab] = useState<TabKey>('health');
+  const [keyOwnerId, setKeyOwnerId] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    const abort = new AbortController();
+    setKeyOwnerId(null);
+    if (loading || !isAdmin || !user?.id) return () => { active = false; abort.abort(); };
+    const id = user.id;
+    fetch('/api/admin/agent-credentials', { cache: 'no-store', signal: abort.signal })
+      .then(response => { if (active && response.ok) setKeyOwnerId(id); })
+      .catch(() => {});
+    return () => { active = false; abort.abort(); };
+  }, [user?.id, isAdmin, loading]);
+  const canManageKeys = Boolean(user?.id && keyOwnerId === user.id && isAdmin && !loading);
+  useEffect(() => {
+    if (activeTab === 'agent-keys' && !canManageKeys) setActiveTab('health');
+  }, [activeTab, canManageKeys]);
+  const tabs = canManageKeys ? [...TABS, { key: 'agent-keys' as const, label: 'Agent keys' }] : TABS;
 
   if (loading) {
     return (
@@ -571,7 +589,7 @@ export default function AdminPage() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Tab Navigation */}
         <div className="flex gap-1 overflow-x-auto no-scrollbar mb-6 border-b border-zinc-800 pb-px">
-          {TABS.map(tab => (
+          {tabs.map(tab => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
@@ -596,6 +614,7 @@ export default function AdminPage() {
         {activeTab === 'settings' && <SiteSettings />}
         {activeTab === 'users' && <UserManagement />}
         {activeTab === 'history' && <HealthCheckHistory />}
+        {activeTab === 'agent-keys' && canManageKeys && <AgentKeysPanel key={user.id} />}
       </div>
     </div>
   );
