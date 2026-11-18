@@ -52,6 +52,11 @@ export async function POST(req: NextRequest) {
   const ttl = body?.expiresInDays;
   if (typeof body?.label !== 'string' || body.label.trim().length < 1 || body.label.length > 80 || !Number.isInteger(ttl) || ttl < 1 || ttl > 90)
     return NextResponse.json({ error: 'label (1–80 characters) and expiresInDays (1–90) required' }, { status: 400, headers });
+  // Preserve legacy clients that omit scope, but never coerce invalid values
+  // into broader authority. The owner chooses any explicit restricted scope.
+  const scope = body.scope === undefined ? 'admin' : body.scope;
+  if (scope !== 'admin' && scope !== 'submission_review')
+    return NextResponse.json({ error: 'scope must be admin or submission_review' }, { status: 400, headers });
   const principalId = body.adminUserId ?? userId;
   if (typeof principalId !== 'string' || !/^[0-9a-f-]{36}$/i.test(principalId))
     return NextResponse.json({ error: 'Invalid adminUserId' }, { status: 400, headers });
@@ -62,10 +67,10 @@ export async function POST(req: NextRequest) {
   const token = newAgentSecret();
   const expiresAt = new Date(Date.now() + ttl * 86400000).toISOString();
   // Pre-log issuance intent; a failed insert leaves no usable secret.
-  const { error: auditError } = await supabaseAdmin.from('admin_logs').insert({ admin_id: userId, action: 'agent_credential_issue_requested', target_type: 'agent_credential', target_id: id, metadata: { expires_at: expiresAt, principal_id: principalId } });
+  const { error: auditError } = await supabaseAdmin.from('admin_logs').insert({ admin_id: userId, action: 'agent_credential_issue_requested', target_type: 'agent_credential', target_id: id, metadata: { expires_at: expiresAt, principal_id: principalId, scope } });
   if (auditError) return NextResponse.json({ error: 'Audit service unavailable' }, { status: 503, headers });
-  const { error } = await agentDb.from('agent_credentials').insert({ id, owner_id: principalId, label: body.label.trim(), scope: 'admin', secret_hash: hashAgentSecret(token), expires_at: expiresAt });
-  return NextResponse.json(error ? { error: 'Issue failed' } : { id, token, scope: 'admin', expiresAt }, { status: error ? 503 : 201, headers });
+  const { error } = await agentDb.from('agent_credentials').insert({ id, owner_id: principalId, label: body.label.trim(), scope, secret_hash: hashAgentSecret(token), expires_at: expiresAt });
+  return NextResponse.json(error ? { error: 'Issue failed' } : { id, token, scope, expiresAt }, { status: error ? 503 : 201, headers });
 }
 export async function DELETE(req: NextRequest) {
   const userId = await owner(req, true);

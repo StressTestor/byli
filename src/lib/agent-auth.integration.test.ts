@@ -33,6 +33,7 @@ beforeAll(async () => {
     CREATE TABLE admin_logs(admin_id uuid,action text,target_id uuid,metadata jsonb);
     INSERT INTO profiles VALUES ('${principal}','admin');`);
   await state.db.exec(await readFile('supabase/migrations/20261118020756_agent_credentials.sql','utf8'));
+  await state.db.exec(await readFile('supabase/migrations/20261118030434_submission_review_scope.sql','utf8'));
 });
 afterAll(async () => state.db?.close());
 it('validates real disposable credentials, tampering, expiry, demotion and revocation', async () => {
@@ -51,4 +52,19 @@ it('validates real disposable credentials, tampering, expiry, demotion and revoc
   expect(logs).toHaveLength(1);
   expect(JSON.stringify(logs)).not.toContain(token);
   // No raw token ever persisted or printed; database destroyed by afterAll.
+});
+
+it('enforces a real review credential scope and leaves existing admin scope unchanged', async () => {
+  const token = newAgentSecret();
+  const {rows:[row]} = await state.db.query(`INSERT INTO agent_credentials(owner_id,label,scope,secret_hash,expires_at) VALUES ($1,'Synthetic reviewer','submission_review',$2,now()+interval '1 day') RETURNING id`,[principal,hashAgentSecret(token)]);
+  for (const operation of ['list.submissions', 'submission.reject', 'approve_submission']) {
+    await expect(authenticateAgent(`Bearer ${token}`,operation)).resolves.toEqual({userId:principal,credentialId:row.id});
+  }
+  for (const operation of ['ingest','list.profiles','list.logs','article.delete','setting.update','profile.role','credentials.issue','unknown']) {
+    await expect(authenticateAgent(`Bearer ${token}`,operation)).rejects.toMatchObject({status:403});
+  }
+  const {rows:old} = await state.db.query("SELECT scope FROM agent_credentials WHERE label='Synthetic test'");
+  expect(old[0].scope).toBe('admin');
+  await state.db.query('UPDATE agent_credentials SET revoked_at=now() WHERE id=$1',[row.id]);
+  await expect(authenticateAgent(`Bearer ${token}`,'list.submissions')).rejects.toMatchObject({status:401});
 });

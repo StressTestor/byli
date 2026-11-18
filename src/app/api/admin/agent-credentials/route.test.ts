@@ -162,3 +162,30 @@ it('pages metadata beyond the first hundred with stable ordering', async () => {
 it.each(['-1','1.5','Infinity','100001'])('rejects invalid list offset %s', async offset => {
   expect((await GET(new NextRequest(`https://linkdrift.app/api/admin/agent-credentials?offset=${offset}`))).status).toBe(400);
 });
+
+describe('owner-selected credential scope', () => {
+  it.each([
+    { scope: undefined, expected: 'admin' },
+    { scope: 'admin', expected: 'admin' },
+    { scope: 'submission_review', expected: 'submission_review' },
+  ])('persists, audits and returns scope $expected with explicit input $scope', async ({ scope, expected }) => {
+    const result = await POST(request('POST', { ...validBody, scope }));
+    expect(result.status).toBe(201);
+    expect((await result.json()).scope).toBe(expected);
+    expect(state.calls).toContainEqual(['agent', 'agent_credentials', 'insert', expect.objectContaining({ scope: expected })]);
+    expect(state.calls).toContainEqual(['admin', 'admin_logs', 'insert', expect.objectContaining({
+      action: 'agent_credential_issue_requested', metadata: expect.objectContaining({ scope: expected }),
+    })]);
+  });
+  it.each(['', 'ADMIN', 'admin ', 'root', 'submission-review', null, false, 0, [], ['admin'], { scope: 'admin' }])('rejects unknown or malformed scope %j before touching storage', async scope => {
+    const result = await POST(request('POST', { ...validBody, scope }));
+    expect(result.status).toBe(400);
+    expect(await result.json()).toEqual({ error: 'scope must be admin or submission_review' });
+    expect(state.calls).toEqual([]);
+  });
+  it('requires owner authorization even for restricted submission-review issuance', async () => {
+    state.user = { id: otherAdminId, identities: [{ provider: 'github', id: '999' }] };
+    expect((await POST(request('POST', { ...validBody, scope: 'submission_review' }))).status).toBe(403);
+    expect(state.calls).toEqual([]);
+  });
+});

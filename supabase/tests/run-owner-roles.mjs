@@ -17,9 +17,16 @@ try {
  ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
  CREATE POLICY reads ON profiles FOR SELECT TO authenticated USING(true);
  CREATE POLICY own_profile ON profiles FOR UPDATE TO authenticated USING(auth.uid()=id) WITH CHECK(auth.uid()=id);`);
+ // Replay the actual historical role-guard wiring, not invented test triggers.
+ await db.exec(await readFile(new URL('../migrations/20260603095039_lock_profiles_role.sql',import.meta.url),'utf8'));
+ const hardening = await readFile(new URL('../migrations/20261013091522_harden_grants_and_policies.sql',import.meta.url),'utf8');
+ const insertGuard = hardening.match(/CREATE OR REPLACE FUNCTION public\.prevent_profile_role_change\(\)[\s\S]*?EXECUTE FUNCTION public\.prevent_profile_role_change\(\);/);
+ assert.ok(insertGuard, 'Historical insert guard block must be found');
+ await db.exec(insertGuard[0]);
  await db.exec(await readFile(new URL('../migrations/20261118021217_owner_admin_role_control.sql',import.meta.url),'utf8'));
- await db.exec(`CREATE TRIGGER guard_update BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();
- CREATE TRIGGER guard_insert BEFORE INSERT ON profiles FOR EACH ROW EXECUTE FUNCTION prevent_profile_role_change();`);
+ const {rows:wiring} = await db.query(`SELECT t.tgname, t.tgenabled, p.proname FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+   WHERE t.tgrelid='public.profiles'::regclass AND NOT t.tgisinternal ORDER BY t.tgname`);
+ assert.deepEqual(wiring, ['trg_profiles_prevent_admin_delete','trg_profiles_prevent_role_change','trg_profiles_prevent_role_insert'].map(tgname=>({tgname,tgenabled:'O',proname:'prevent_profile_role_change'})));
  const session=async(id,role)=>db.exec(`RESET ROLE; SET request.jwt.claim.sub='${id}'; SET request.jwt.claim.role='${role}'; SET ROLE ${role};`);
  await session(owner,'authenticated');
  await db.query("UPDATE profiles SET role='admin' WHERE id=$1",[target]);
