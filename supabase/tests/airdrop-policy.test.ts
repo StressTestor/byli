@@ -11,7 +11,7 @@ beforeAll(async()=>{
  GRANT USAGE ON SCHEMA public TO authenticated,service_role;
  GRANT ALL ON public.articles TO authenticated,service_role;
  INSERT INTO articles(id,title,status) VALUES('legacy','Crypto airdrop is live','published');`);
- await db.exec(await readFile('supabase/migrations/20261122193652_airdrop_publication_guard.sql','utf8'));
+ await db.exec(await readFile('supabase/migrations/20261122194411_airdrop_publication_guard.sql','utf8'));
 },15000);
 afterAll(()=>db.close());
 it.each(fixtures)('SQL/JS UTF8 parity: $title',async(row)=>{
@@ -37,6 +37,6 @@ it('denies direct browser and service-role publication, while archive/unfeature 
 });
 it('does not mutate existing rows when installing guard',async()=>{
  // The migration only defines functions/trigger; no data statements permitted.
- const sql=await readFile('supabase/migrations/20261122193652_airdrop_publication_guard.sql','utf8');
+ const sql=await readFile('supabase/migrations/20261122194411_airdrop_publication_guard.sql','utf8');
  expect(sql).not.toMatch(/\b(TRUNCATE|DROP TABLE|DELETE FROM|UPDATE public\.articles|INSERT INTO)\b/i);
 });
