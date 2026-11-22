@@ -528,3 +528,35 @@ describe('first source refresh from already-fetched payloads', () => {
     expect(db.calls.some(q => q.table === 'articles' && q.op === 'update')).toBe(false);
   });
 });
+
+describe('crypto-airdrop publication guard', () => {
+  it.each(['title', 'preview_text', 'contents'])('blocks promotion in upstream %s before author/article writes', async field => {
+    seeds = { data: [{ handle: 'alice', high_yield: false }], error: null };
+    const tweet = articleTweet('42');
+    tweet.article.title = 'Crypto airdrop overview';
+    const promotion = 'Claim your crypto token airdrop rewards now. Connect your wallet to claim the airdrop.';
+    if (field === 'contents') tweet.article.contents = [{ text: 'Ordinary introduction. '.repeat(40) + promotion }];
+    else tweet.article[field as 'title' | 'preview_text'] = promotion;
+    routes.timeline = () => json({ status: 'success', data: { tweets: [tweet] } });
+    const result = await ingestArticles(fast);
+    expect(result.skipped_blocked).toBe(1);
+    expect(db.calls.filter(q => ['articles', 'authors', 'article_categories'].includes(q.table) && q.op !== 'select')).toEqual([]);
+  });
+  it('does not return a blocked legacy article ID through dedup approval', async () => {
+    db.respond = q => q.table === 'articles' && q.op === 'select'
+      ? { data: { id: 'legacy', title: 'Claim your crypto airdrop rewards', excerpt: 'Connect your wallet to claim free tokens.', body_preview: null }, error: null }
+      : defaultRespond(q);
+    const result = await ingestSingleArticle('42');
+    expect(result).toMatchObject({ ok: false, blocked: true });
+    expect(result).not.toHaveProperty('articleId');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.calls.some(q => q.op !== 'select')).toBe(false);
+  });
+  it.each(['Apple AirDrop troubleshooting tips', 'Warning: crypto airdrop scams steal your wallet'])('preserves allowed content: %s', async title => {
+    seeds = { data: [{ handle: 'alice', high_yield: false }], error: null };
+    const tweet = articleTweet('42'); tweet.article.title = title;
+    routes.timeline = () => json({ status: 'success', data: { tweets: [tweet] } });
+    const result = await ingestArticles(fast);
+    expect(result.new_articles).toBe(1);
+  });
+});

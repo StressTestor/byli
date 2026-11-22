@@ -1,3 +1,4 @@
+import { isBlockedAirdropContent } from './airdrop-policy';
 import { usableArticleBody, articleTeaser, estimateReadTime } from './ingest-utils';
 import { isBlockedTitle } from './title-filter';
 import { extractTweetId } from './tweet-id';
@@ -38,6 +39,9 @@ export function sourceRefreshPatch(row: RefreshableArticle, input: {
   if (typeof article?.title !== 'string' || !article.title.trim() || article.title.length > 1000 ||
       isBlockedTitle(article.title) || typeof article.preview_text !== 'string' ||
       !Array.isArray(article.contents)) return null;
+  if (isBlockedAirdropContent({ title: article.title, excerpt: article.preview_text,
+    body_preview: article.contents.map(block => typeof block?.text === 'string' ? block.text : '').join('\n'),
+  })) return null;
   const text = usableArticleBody(article.contents, article.preview_text);
   // Do not replace a stored preview with an empty, obviously cut off, or shorter
   // response. Upstream payload completeness cannot be proven without a version API.
@@ -52,6 +56,7 @@ export function sourceRefreshPatch(row: RefreshableArticle, input: {
     body_preview: text.slice(0, 500),
     read_time_min: readTime,
   };
+  if (isBlockedAirdropContent({ ...row, ...patch })) return null;
   if (patch.excerpt.length > 10000 ||
       Object.entries(patch).every(([key, value]) => row[key as keyof RefreshableArticle] === value)) return null;
   return patch;

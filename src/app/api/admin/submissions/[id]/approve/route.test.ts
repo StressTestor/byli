@@ -221,3 +221,12 @@ describe('bearer approval attribution', () => {
     expect(state.audits).toEqual([]);
   });
 });
+
+it('never links a blocked ingest outcome even if it incorrectly includes a legacy article ID', async () => {
+  state.ingest = vi.fn(async () => ({ ok: false, blocked: true, error: 'crypto-airdrop promotion is not allowed', articleId: 'legacy-blocked' }));
+  const response = await call();
+  expect(response.status).toBe(422);
+  expect(state.updates.map(u => u.row.status)).toEqual(['approved', 'pending']);
+  expect(state.updates.some(u => u.row.article_id)).toBe(false);
+  expect(state.upserts).toEqual([]);
+});
