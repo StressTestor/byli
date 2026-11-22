@@ -72,7 +72,7 @@
   },
   {
     "title": "News: airdrop claims open after token launch",
-    "blocked": false
+    "blocked": true
   },
   {
     "title": "Crypto market roundup",
@@ -110,5 +110,61 @@
     "title": "Cara Secure Position buat $SAMPLE Airdrop",
     "excerpt": "A new project for the agentic economy.",
     "blocked": true
+  },
+  {
+    "title": "News: crypto airdrop claims are now open!",
+    "blocked": true
+  },
+  {
+    "title": "News: $SAMPLE airdrop claim portal is live.",
+    "blocked": true
+  },
+  {
+    "title": "Airdrop claims open after the token launch",
+    "blocked": true
+  },
+  {
+    "title": "News: are airdrop claims open after token launch?",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims open after token launch?",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims are not open",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims were open last week",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims open next month",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims will open after token launch",
+    "blocked": false
+  },
+  {
+    "title": "News: warning about airdrop claims open scam",
+    "blocked": false
+  },
+  {
+    "title": "News: airdrop claims open after token launch, but beware fake sites",
+    "blocked": false
+  },
+  {
+    "title": "News: aid airdrop operations open after training",
+    "blocked": false
+  },
+  {
+    "title": "News: Apple AirDrop is available",
+    "blocked": false
+  },
+  {
+    "title": "Analysis: airdrop claims open after token launch",
+    "blocked": false
   }
 ]

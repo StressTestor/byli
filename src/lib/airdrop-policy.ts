@@ -4,6 +4,7 @@
  */
 export type AirdropContent = { title?: string | null; excerpt?: string | null; body_preview?: string | null };
 export const AIRDROP_PATTERNS = {
+  currentClaimAnnouncement: '^[ ]*(news[ ]*:[ ]*)?((crypto|\\$[a-z][a-z0-9]{1,}) )?air[ -]?drop (claims|claim portal) (is |are )?(now )?(open|live|available)( after (the )?token launch)?[.!]?[ ]*$',
   topic: '(^|[^a-z0-9])air[ -]?drops?([^a-z0-9]|$)',
   crypto: '(^|[^a-z0-9])(crypto|tokens?|wallets?|onchain|on-chain|blockchain|xrpl|xrp|ethereum|eth|bitcoin|btc|solana|defi)([^a-z0-9]|$)|\\$[a-z][a-z0-9]{1,}',
   farming: '(^|[^a-z0-9])(farm|farming|farmer|farmers)([^a-z0-9]|$)',
@@ -23,6 +24,9 @@ export function isBlockedAirdropContent(content: AirdropContent): boolean {
   const lead = normalize([content.excerpt, content.body_preview].filter(Boolean).join(' '));
   const all = title + ' ' + lead;
   const matches = (key: keyof typeof AIRDROP_PATTERNS, value: string) => new RegExp(AIRDROP_PATTERNS[key]).test(value);
+  // A bare current-availability announcement is not neutral news. An
+  // anchored predicate keeps questions, denials, warnings and timing qualifiers out.
+  if (matches('currentClaimAnnouncement', title)) return true;
   if (matches('defensive', title)) return false;
   if (matches('apple', title) && !matches('crypto', title)) return false;
   const crypto = matches('crypto', all);

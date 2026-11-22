@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import fixtures from '../../src/lib/fixtures/airdrop-policy.json';
 import { isBlockedAirdropContent } from '../../src/lib/airdrop-policy';
 const db=new PGlite();
+const claimMigration='supabase/migrations/20261122195115_airdrop_claim_announcements.sql';
 beforeAll(async()=>{
  await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
@@ -12,6 +13,10 @@ beforeAll(async()=>{
  GRANT ALL ON public.articles TO authenticated,service_role;
  INSERT INTO articles(id,title,status) VALUES('legacy','Crypto airdrop is live','published');`);
  await db.exec(await readFile('supabase/migrations/20261122194411_airdrop_publication_guard.sql','utf8'));
+ const before=await db.query("SELECT oid,proacl FROM pg_proc WHERE oid='public.is_blocked_airdrop_content(text,text,text)'::regprocedure");
+ await db.exec(await readFile(claimMigration,'utf8'));
+ const after=await db.query("SELECT oid,proacl FROM pg_proc WHERE oid='public.is_blocked_airdrop_content(text,text,text)'::regprocedure");
+ expect(after.rows).toEqual(before.rows);
 },15000);
 afterAll(()=>db.close());
 it.each(fixtures)('SQL/JS UTF8 parity: $title',async(row)=>{
@@ -39,4 +44,16 @@ it('does not mutate existing rows when installing guard',async()=>{
  // The migration only defines functions/trigger; no data statements permitted.
  const sql=await readFile('supabase/migrations/20261122194411_airdrop_publication_guard.sql','utf8');
  expect(sql).not.toMatch(/\b(TRUNCATE|DROP TABLE|DELETE FROM|UPDATE public\.articles|INSERT INTO)\b/i);
+});
+
+it('rejects claim availability on publication without rebuilding the trigger',async()=>{
+ await db.exec('SET ROLE authenticated');
+ try {
+  await expect(db.exec("INSERT INTO articles(id,title,status) VALUES('announcement','News: airdrop claims open after token launch','published')")).rejects.toMatchObject({code:'23514',constraint:'articles_airdrop_publication_policy'});
+  await db.exec("INSERT INTO articles(id,title,status) VALUES('future','News: airdrop claims will open after token launch','published')");
+ } finally {
+  await db.exec('RESET ROLE');
+ }
+ const sql=await readFile(claimMigration,'utf8');
+ expect(sql).not.toMatch(/^[ \t]*(CREATE TRIGGER|DROP|TRUNCATE|DELETE FROM|UPDATE public\.articles|INSERT INTO|GRANT|REVOKE)\b/im);
 });
