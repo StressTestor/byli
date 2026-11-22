@@ -6,6 +6,7 @@ import { isBlockedAirdropContent } from '../../src/lib/airdrop-policy';
 const db=new PGlite();
 beforeAll(async()=>{
  await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
+ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
  CREATE TABLE public.articles(id text PRIMARY KEY,title text,excerpt text,body_preview text,status text,featured boolean DEFAULT false);
  GRANT USAGE ON SCHEMA public TO authenticated,service_role;
  GRANT ALL ON public.articles TO authenticated,service_role;

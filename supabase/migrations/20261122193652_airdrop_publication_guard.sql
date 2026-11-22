@@ -26,7 +26,7 @@ END;
 $function$;
 
 -- This function is an input-only classifier, not a privileged data API.
-REVOKE ALL ON FUNCTION public.is_blocked_airdrop_content(text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_blocked_airdrop_content(text,text,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_blocked_airdrop_content(text,text,text) TO authenticated, service_role;
 CREATE FUNCTION public.enforce_airdrop_publication_policy()
 RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $function$
