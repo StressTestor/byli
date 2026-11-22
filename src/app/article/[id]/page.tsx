@@ -5,6 +5,12 @@ import { getArticle } from '@/lib/public-page-data';
 import { serializeJsonLd } from './json-ld';
 import { getRelatedArticles } from './related-articles';
 
+// A published-only query is not a visibility check if Next reuses an old
+// Supabase response. Keep detail, metadata and related cards fresh. React
+// still deduplicates the primary lookup within a single render.
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function formatDate(dateStr: string): string {
