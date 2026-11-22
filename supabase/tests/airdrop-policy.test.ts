@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import fixtures from '../../src/lib/fixtures/airdrop-policy.json';
 import { isBlockedAirdropContent } from '../../src/lib/airdrop-policy';
 const db=new PGlite();
-const claimMigration='supabase/migrations/20261122194643_airdrop_claim_announcements.sql';
+const claimMigration='supabase/migrations/20261122195115_airdrop_claim_announcements.sql';
 beforeAll(async()=>{
  await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
