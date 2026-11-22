@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CREDENTIAL_OWNER_USER_ID } from '@/lib/credential-owner';
 import { NextRequest } from 'next/server';
-const state = vi.hoisted(() => ({ calls: [] as unknown[][], denied: false, actorId: 'owner', currentRole: 'user', auditFailure: 0, auditCount: 0, data: [{ id: 'a' }] as unknown[], error: null as unknown }));
+const state = vi.hoisted(() => ({ calls: [] as unknown[][], denied: false, actorId: 'owner', currentRole: 'user', article: { title: 'Ordinary article', excerpt: '', body_preview: '' } as any, auditFailure: 0, auditCount: 0, data: [{ id: 'a' }] as unknown[], error: null as unknown }));
 vi.mock('@/lib/agent-auth', () => {
   class AgentAuthError extends Error { status = 401; }
   return { AgentAuthError, authenticateAgent: vi.fn(async () => {
@@ -15,7 +15,7 @@ vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { rpc: async (name: stri
   for (const method of ['select', 'eq', 'order', 'range', 'update', 'insert', 'delete']) {
     builder[method] = (...args: unknown[]) => { state.calls.push([method, ...args]); return builder; };
   }
-  builder.maybeSingle = async () => ({ data: { role: state.currentRole }, error: null });
+  builder.maybeSingle = async () => ({ data: table === 'articles' ? state.article : { role: state.currentRole }, error: null });
   builder.then = (resolve: (value: unknown) => void) => {
     if (table === 'admin_logs') { state.auditCount++; return resolve({ data: [], error: state.auditCount === state.auditFailure ? { message: 'audit unavailable' } : null }); }
     return resolve({ data: state.data, error: state.error });
@@ -25,7 +25,7 @@ vi.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { rpc: async (name: stri
 import { POST } from './route';
 const id = '12345678-1234-1234-1234-123456789abc';
 const call = (body: unknown) => POST(new NextRequest('https://linkdrift.app/api/agent/admin', { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer test' } }));
-beforeEach(() => { state.calls = []; state.actorId = 'owner'; state.currentRole = 'user'; state.auditCount = 0; state.auditFailure = 0; state.denied = false; state.data = [{ id }]; state.error = null; });
+beforeEach(() => { state.calls = []; state.actorId = 'owner'; state.currentRole = 'user'; state.article = { title: 'Ordinary article', excerpt: '', body_preview: '' }; state.auditCount = 0; state.auditFailure = 0; state.denied = false; state.data = [{ id }]; state.error = null; });
 describe('agent admin dispatcher', () => {
   it('does not touch database when credential is rejected', async () => {
     state.denied = true;
@@ -173,4 +173,16 @@ describe('agent admin dispatcher', () => {
     expect((await call({ operation: 'list.profiles', padding: 'x'.repeat(9000) })).status).toBe(400);
     expect(state.calls).toEqual([]);
   });
+});
+
+it('blocks republishing stored crypto-airdrop promotion before mutation', async () => {
+  state.article = { title: 'Claim your crypto airdrop rewards', excerpt: 'Connect your wallet to claim free tokens.', body_preview: '' };
+  expect((await call({ operation: 'article.status', id, status: 'published' })).status).toBe(422);
+  expect(state.calls.some(c => c[0] === 'update')).toBe(false);
+});
+it('allows archiving blocked promotion and publishing defensive warnings', async () => {
+  state.article = { title: 'Claim your crypto airdrop rewards', excerpt: '', body_preview: '' };
+  expect((await call({ operation: 'article.status', id, status: 'archived' })).status).toBe(200);
+  state.article.title = 'Warning: crypto airdrop scams steal your wallet';
+  expect((await call({ operation: 'article.status', id, status: 'published' })).status).toBe(200);
 });

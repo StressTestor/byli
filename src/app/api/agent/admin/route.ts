@@ -1,3 +1,4 @@
+import { isBlockedAirdropContent } from '@/lib/airdrop-policy';
 import { CREDENTIAL_OWNER_USER_ID } from '@/lib/credential-owner';
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
@@ -92,6 +93,14 @@ export async function POST(req: NextRequest) {
         result = await mutate(() => supabaseAdmin.from('articles').update({ featured: input.featured as boolean }).eq('id', id).select('id')); break;
       case 'article.status':
         check(['pending', 'published', 'archived', 'rejected'].includes(String(input.status)));
+        if (input.status === 'published') {
+          const prospective = await supabaseAdmin.from('articles').select('title,excerpt,body_preview').eq('id', id).maybeSingle();
+          if (prospective.error) return reply({ error: 'Article lookup failed' }, 500);
+          if (!prospective.data) return reply({ error: 'Target missing or state changed' }, 409);
+          if (isBlockedAirdropContent(prospective.data)) return reply({ error: 'Crypto-airdrop promotion is not allowed' }, 422);
+          // The database publication trigger remains the authoritative boundary
+          // against concurrent content edits and direct browser writes.
+        }
         result = await mutate(() => supabaseAdmin.from('articles').update({ status: input.status as 'pending' | 'published' | 'archived' | 'rejected' }).eq('id', id).select('id')); break;
       case 'article.delete':
         result = await mutate(() => supabaseAdmin.from('articles').delete().eq('id', id).select('id')); break;

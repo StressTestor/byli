@@ -71,3 +71,15 @@ describe('conservative first source refresh', () => {
     expect(patch.excerpt).toBe(input.article.contents[0].text.slice(0, 300));
   });
 });
+
+it('rejects a prospective source refresh with crypto-airdrop promotion', () => {
+  expect(sourceRefreshPatch(row, { ...input, article: { ...input.article, title: 'Claim your crypto token airdrop rewards now' } })).toBeNull();
+});
+it('checks upstream content beyond the persisted 500-character preview before refresh', () => {
+  expect(sourceRefreshPatch(row, { ...input, article: { ...input.article,
+    title: 'Crypto airdrop overview', contents: [{ text: 'Complete ordinary introduction. '.repeat(40) + ' Claim your crypto airdrop rewards now. Connect your wallet to claim free tokens.' }],
+  } })).toBeNull();
+});
+it('allows defensive crypto-airdrop warnings on source refresh', () => {
+  expect(sourceRefreshPatch(row, { ...input, article: { ...input.article, title: 'Warning: crypto airdrop scams steal your wallet' } })).not.toBeNull();
+});

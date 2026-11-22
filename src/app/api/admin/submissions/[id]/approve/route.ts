@@ -116,7 +116,9 @@ export async function POST(
   stage = 'ingest';
   const outcome = await ingestSingleArticle(tweetId);
   // "already exists" still carries the existing article's id; link it.
-  const articleId = outcome.articleId;
+  // A blocked result must never be linked, even if an upstream dedup result
+  // accidentally includes an ID. Release the pending claim below instead.
+  const articleId = outcome.blocked ? undefined : outcome.articleId;
   if (!articleId) {
     // Release the claim so the submission goes back to the queue.
     stage = 'release';

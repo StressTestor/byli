@@ -160,15 +160,17 @@ function SidebarArticles() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const toggleFeatured = async (a: Article) => {
-    const { error } = await supabase.from('articles').update({ featured: !a.featured }).eq('id', a.id);
+    const { data, error } = await supabase.from('articles').update({ featured: !a.featured }).eq('id', a.id).select('id');
     if (error) { alert(`Failed to update: ${error.message}`); return; }
+    if (data?.length !== 1 || data[0].id !== a.id) { alert('No article update was confirmed.'); return; }
     await logAdminAction(a.featured ? 'unfeature_article' : 'feature_article', 'article', a.id, { title: a.title });
     fetch();
   };
 
   const changeStatus = async (a: Article, status: 'published' | 'archived') => {
-    const { error } = await supabase.from('articles').update({ status }).eq('id', a.id);
+    const { data, error } = await supabase.from('articles').update({ status }).eq('id', a.id).select('id');
     if (error) { alert(`Failed to update: ${error.message}`); return; }
+    if (data?.length !== 1 || data[0].id !== a.id) { alert('No article update was confirmed.'); return; }
     await logAdminAction('change_article_status', 'article', a.id, { from: a.status, to: status });
     fetch();
   };

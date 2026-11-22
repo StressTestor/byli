@@ -3,7 +3,8 @@
 import { AgentKeysPanel } from '@/components/agent-keys-panel';
 import { SubmissionLink } from '@/components/submission-link';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { parseAdminArticleIds } from '@/lib/admin-article-filter';
 import Link from 'next/link';
 import { createBrowserClient } from '@/lib/supabase-browser';
 import { runHealthCheck } from '@/lib/health-check';
@@ -199,28 +200,52 @@ function ArticleManagement() {
   const [loading, setLoading] = useState(true);
   const supabase = createBrowserClient();
 
+  const articleRequest = useRef(0);
   const fetchArticles = useCallback(async () => {
+    const request = ++articleRequest.current;
     setLoading(true);
-    const { data } = await supabase
-      .from('articles')
-      .select('*')
-      .order('indexed_at', { ascending: false })
-      .limit(50);
-    if (data) setArticles(data);
-    setLoading(false);
+    setArticles([]);
+    try {
+      // Read only when loading this client panel, avoiding a new Suspense or
+      // route-rendering requirement. No parameter retains the original query.
+      const ids = parseAdminArticleIds(window.location.search);
+      let query = supabase.from('articles').select('*');
+      if (ids !== null) query = query.in('id', ids);
+      const { data, error } = await query.order('indexed_at', { ascending: false }).limit(50);
+      if (request !== articleRequest.current) return;
+      if (error) throw new Error('Failed to load articles. No fallback results were loaded.');
+      setArticles(data ?? []);
+    } catch (error) {
+      if (request !== articleRequest.current) return;
+      setArticles([]);
+      alert(error instanceof Error ? error.message : 'Failed to load articles.');
+    } finally {
+      if (request === articleRequest.current) setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { fetchArticles(); }, [fetchArticles]);
+  useEffect(() => {
+    void fetchArticles();
+    const onPopState = () => { void fetchArticles(); };
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      articleRequest.current++;
+      window.removeEventListener('popstate', onPopState);
+    };
+  }, [fetchArticles]);
 
   const toggleFeatured = async (article: Article) => {
-    await supabase.from('articles').update({ featured: !article.featured }).eq('id', article.id);
+    const { data, error } = await supabase.from('articles').update({ featured: !article.featured }).eq('id', article.id).select('id');
+    if (error) { alert(`Failed to update: ${error.message}`); return; }
+    if (data?.length !== 1 || data[0].id !== article.id) { alert('No article update was confirmed.'); return; }
     await logAdminAction(article.featured ? 'unfeature_article' : 'feature_article', 'article', article.id, { title: article.title });
     fetchArticles();
   };
 
   const changeStatus = async (article: Article, status: 'published' | 'archived') => {
-    const { error } = await supabase.from('articles').update({ status }).eq('id', article.id);
+    const { data, error } = await supabase.from('articles').update({ status }).eq('id', article.id).select('id');
     if (error) { alert(`Failed to update: ${error.message}`); return; }
+    if (data?.length !== 1 || data[0].id !== article.id) { alert('No article update was confirmed.'); return; }
     await logAdminAction('change_article_status', 'article', article.id, { from: article.status, to: status });
     fetchArticles();
   };

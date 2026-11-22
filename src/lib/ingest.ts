@@ -1,3 +1,4 @@
+import { isBlockedAirdropContent } from '@/lib/airdrop-policy';
 /**
  * Linkdrift ingestion core (shared by /api/ingest and the admin approve route)
  *
@@ -387,6 +388,10 @@ async function processArticle(input: ProcessArticleInput): Promise<IngestOutcome
 
   // Blocklisted titles are dropped before any database write.
   if (isBlockedTitle(article.title)) return { ok: false, blocked: true, error: 'blocked title' };
+
+  if (isBlockedAirdropContent({ title: article.title, excerpt: article.preview_text || '',
+    body_preview: Array.isArray(article.contents) ? article.contents.map(block => typeof block?.text === 'string' ? block.text : '').join('\n') : '',
+  })) return { ok: false, blocked: true, error: 'crypto-airdrop promotion is not allowed' };
 
   const cleanText = usableArticleBody(article.contents, article.preview_text || '');
   const excerpt = articleTeaser(article.preview_text, cleanText);
@@ -824,14 +829,17 @@ export async function ingestSingleArticle(tweetId: string): Promise<IngestOutcom
     // Dedup check
     const { data: existing, error: existingErr } = await supabaseAdmin
       .from('articles')
-      .select('id')
+      .select('id,title,excerpt,body_preview')
       .eq('x_article_id', tweetId)
       .maybeSingle();
     if (existingErr) {
       throw new Error(`articles lookup by x_article_id failed: ${dbErrorMessage(existingErr)}`);
     }
 
-    if (existing) return { ok: false, error: 'already exists', articleId: existing.id };
+    if (existing) {
+      if (isBlockedAirdropContent(existing)) return { ok: false, blocked: true, error: 'crypto-airdrop promotion is not allowed' };
+      return { ok: false, error: 'already exists', articleId: existing.id };
+    }
 
     // Fetch article via probe endpoint (manual submission doesn't have timeline context)
     const article = await probeArticle(tweetId);
